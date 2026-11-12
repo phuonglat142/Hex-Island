@@ -3,6 +3,7 @@
 // after that the controller effect calls `board.render(view, boardView)` whenever the inputs change.
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { App } from '@app/index';
 import { BoardView } from '@board/BoardView';
 import type { BoardRenderer } from '@board/BoardRenderer';
 import { Jit } from '@ui/components/Jit';
@@ -21,6 +22,13 @@ export function BoardHost(): JSX.Element {
     const el = wrap.current!;
     let dead = false;
     let board: BoardRenderer | null = null;
+    // the bots wait for the island: their first houses are placed on a board the player can see
+    App.botsHeld = true;
+    const release = () => {
+      if (!App.botsHeld) return;
+      App.botsHeld = false;
+      App.scheduleBots();
+    };
     (async () => {
       try {
         const { Board3D } = await import('@board/Board3D');
@@ -40,10 +48,16 @@ export function BoardHost(): JSX.Element {
       boards.any = board;
       boardSig.value = board; // the controller effect draws the island; shaders compile (compileAsync) while the loader is up
       if (boards.d3 && boards.d3.ready) await boards.d3.ready;
-      if (!dead) setLoading(false);
-    })();
+      if (dead) return;
+      setLoading(false);
+      release();
+    })().catch(e => {
+      console.error(e);
+      if (!dead) release(); // never keep the bots waiting on a board that failed
+    });
     return () => {
       dead = true;
+      App.botsHeld = false;
       boardSig.value = null;
       boards.any = boards.d3 = null;
       if (board) board.dispose();

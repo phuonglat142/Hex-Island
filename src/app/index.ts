@@ -33,6 +33,9 @@ interface AppApi {
   viewer: number;
   speed: number;
   botTimer: ReturnType<typeof setTimeout> | null;
+  /** true while the game screen's board is still loading (island build + shader compile): bots wait, so their
+   *  first moves are never made behind the loader or on a frame stuck compiling (set by BoardHost) */
+  botsHeld: boolean;
   listeners: Array<(st: GameState) => void>;
   // callback slots (set by the UI)
   onLeave: (() => void) | null;
@@ -71,6 +74,7 @@ const DRAMA_FX = ['flipAll', 'blindReveal', 'event', 'chaos', 'win'];
 export const App: AppApi = {
   screens: {},
   botTimer: null,
+  botsHeld: false,
   listeners: [],
   net: null,
   config: null,
@@ -192,7 +196,7 @@ export const App: AppApi = {
     if (App.botTimer) clearTimeout(App.botTimer);
     App.botTimer = null;
     const st = App.state;
-    if (!st || App.isClient() || st.phase === 'gameOver' || App.screen !== 'game') return;
+    if (!st || App.botsHeld || App.isClient() || st.phase === 'gameOver' || App.screen !== 'game') return;
     const bots = pendingActors(st).filter(pid => st.players[pid]!.kind === 'bot');
     if (!bots.length) return;
     const speed = App.speed;
@@ -200,7 +204,7 @@ export const App: AppApi = {
     const drama = (st.fx || []).some(f => DRAMA_FX.includes(f.kind)) ? 2200 : 0;
     const first = drama + speed * 0.6;
     App.botTimer = setTimeout(() => {
-      if (App.state !== st) return;
+      if (App.state !== st || App.botsHeld) return; // held: releasing the hold schedules them again
       for (const pid of bots) {
         const a = botAct(st, pid);
         if (!a) continue;
