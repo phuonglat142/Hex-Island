@@ -49,6 +49,8 @@ export type WireState = Omit<GameState, 'config' | 'board' | 'players' | 'devDec
   board: Omit<Board, (typeof STATIC_KEYS)[number] | 'tiles'> & { tiles?: Board['tiles'] };
   players: Omit<Player, 'flag'>[];
   devDeckN: number;
+  /** real map seed, only once the game is over */
+  seed?: number;
 };
 
 // ---------- host -> client ----------

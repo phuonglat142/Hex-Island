@@ -343,7 +343,7 @@ export function broadcastState(net: Net, st: GameState) {
     if (!live(g)) continue;
     if (!g.sentStatic) {
       const b = st.board;
-      g.conn.send({ type: 'init', board: { vertices: b.vertices, edges: b.edges, sea: b.sea, ports: b.ports, bounds: b.bounds }, config: st.config, flags: st.players.map(p => p.flag || null) });
+      g.conn.send({ type: 'init', board: { vertices: b.vertices, edges: b.edges, sea: b.sea, ports: b.ports, bounds: b.bounds }, config: { ...st.config, seed: 0 }, flags: st.players.map(p => p.flag || null) });
       g.sentStatic = true;
       g.tilesKey = null;
     }
