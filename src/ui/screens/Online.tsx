@@ -67,7 +67,7 @@ export function Online(): JSX.Element {
   const [, setTick] = useState(0);
   const force = () => setTick(n => n + 1);
   // fetch the 3D board's kit and textures while the player sets up the game: the game screen's loader is shorter
-  useEffect(() => { void import('@board/Board3D').then(m => m.Board3D.preload(), () => undefined); }, []);
+  useEffect(() => { import('@board/Board3D').then(m => m.Board3D.preload()).catch(() => undefined); }, []);
   const preCode = (new URLSearchParams(location.search).get('sala') || '').toUpperCase().replace(CLEAN, '').slice(0, 5);
   const [k, setK] = useState(myOrDefaultKingdom);
   const [name, setName] = useState(k.name || (storage(NAME_KEY) as string | null) || '');
