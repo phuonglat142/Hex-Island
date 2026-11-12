@@ -318,14 +318,24 @@ export function playableDev(s: GameState, pid: number): DevType[] {
   const types = new Set<DevType>();
   for (const c of p.dev) {
     if (c.type === 'vp' || c.turn >= s.turn) continue;
-    if (s.phase === 'main' || (s.phase === 'roll' && c.type === 'knight')) types.add(c.type);
+    // 5th edition: any development card may be played during your turn, even before rolling
+    if (s.phase === 'main' || s.phase === 'roll') types.add(c.type);
   }
   return [...types];
+}
+
+/** whoever may build right now in the special building phase */
+export function sbpActor(s: GameState): number | null {
+  return s.phase === 'specialBuild' && s.sbp ? s.sbp.queue[s.sbp.idx] ?? null : null;
 }
 
 // Which players must act right now.
 export function pendingActors(s: GameState): number[] {
   if (s.phase === 'gameOver') return [];
+  if (s.phase === 'specialBuild') {
+    const a = sbpActor(s);
+    return a == null ? [] : [a];
+  }
   if (s.phase === 'setup') return [s.setup.queue[s.setup.idx]!.pid];
   if (s.phase === 'discard') return Object.keys(s.pendingDiscards).map(Number).filter(pid => !s.players[pid]!.retired);
   const out = [s.current];
@@ -862,11 +872,14 @@ H.roll = (s, a) => {
   else s.phase = R.noRobber ? 'main' : 'robber';
 };
 
+const validOffer = (o: Partial<Hand> | null | undefined): boolean => !!o && RES.every(r => Number.isInteger(o[r] || 0) && (o[r] || 0) >= 0);
+
 H.discard = (s, a) => {
   if (s.phase !== 'discard') fail('Không ai phải bỏ thẻ.');
   const need = s.pendingDiscards[a.pid];
   if (!need) fail('Bạn không phải bỏ thẻ.');
   const res = a.res || {};
+  if (!validOffer(res)) fail('Số thẻ bỏ không hợp lệ.'); // whole, non-negative cards only
   const total = RES.reduce((t, r) => t + (res[r] || 0), 0);
   if (total !== need) fail(`Bạn phải bỏ đúng ${need} thẻ.`);
   const p = s.players[a.pid]!;
@@ -913,10 +926,11 @@ function assertMain(s: GameState, a: Action) {
 }
 
 H.build = (s, a) => {
-  if (a.pid !== s.current) fail('Chưa tới lượt bạn.');
+  const sb = s.phase === 'specialBuild';
+  if (sb ? a.pid !== sbpActor(s) : a.pid !== s.current) fail('Chưa tới lượt bạn.');
   const p = s.players[a.pid]!;
   const free = s.phase === 'roadBuilding' && a.what === 'road';
-  if (!free) assertMain(s, a);
+  if (!free && !sb) assertMain(s, a);
   if (a.what === 'road') {
     if (p.roadsLeft <= 0) fail('Bạn hết đường rồi.');
     a = fogResolve(s, a, 'edge', e => canBuildRoad(s, a.pid, e), kv => canBuildRoad(kv, a.pid, a.at), 'at');
@@ -931,7 +945,7 @@ H.build = (s, a) => {
     log(s, free ? `🛤️ @${a.pid} làm một đoạn đường miễn phí.` : `🛤️ @${a.pid} làm một đoạn đường.`, a.pid);
     if (free) {
       s.freeRoads--;
-      if (s.freeRoads <= 0 || p.roadsLeft <= 0 || !legalRoads(s, a.pid).length) s.phase = 'main';
+      if (s.freeRoads <= 0 || p.roadsLeft <= 0 || !legalRoads(s, a.pid).length) s.phase = s.roadReturn || 'main';
     }
   } else if (a.what === 'settlement') {
     if (p.settlementsLeft <= 0) fail('Bạn hết nhà rồi.');
@@ -960,11 +974,13 @@ H.build = (s, a) => {
 H.endRoadBuilding = (s, a) => {
   if (s.phase !== 'roadBuilding' || a.pid !== s.current) fail('Bạn đâu có đang xây đường.');
   s.freeRoads = 0;
-  s.phase = 'main';
+  s.phase = s.roadReturn || 'main';
 };
 
 H.buyDev = (s, a) => {
-  assertMain(s, a);
+  if (s.phase === 'specialBuild') {
+    if (a.pid !== sbpActor(s)) fail('Chưa tới lượt bạn.');
+  } else assertMain(s, a);
   const p = s.players[a.pid]!;
   if (!s.devDeck.length) fail('Hết thẻ phát triển rồi.');
   if (!canAfford(p.res, COSTS.dev)) fail('Bạn không đủ tài nguyên.');
@@ -1003,6 +1019,7 @@ H.playDev = (s, a) => {
       break;
     case 'roadBuilding':
       s.freeRoads = Math.min(2, p.roadsLeft);
+      s.roadReturn = s.phase === 'roll' ? 'roll' : 'main'; // played before rolling: the roll still comes after
       if (s.freeRoads > 0 && legalRoads(s, a.pid).length) s.phase = 'roadBuilding';
       break;
     case 'yearOfPlenty':
@@ -1042,8 +1059,6 @@ H.bankTrade = (s, a) => {
   log(s, `🏦 @${a.pid} đổi ${ratio}${resName(a.give)} lấy 1${resName(a.get)}.`, a.pid);
 };
 
-const validOffer = (o: Partial<Hand> | null | undefined): boolean => !!o && RES.every(r => Number.isInteger(o[r] || 0) && (o[r] || 0) >= 0);
-
 H.proposeTrade = (s, a) => {
   assertMain(s, a);
   if (s.trade) fail('Đang có một lời mời chưa xong.');
@@ -1073,21 +1088,45 @@ H.respondTrade = (s, a) => {
   t.responses[a.pid] = a.accept ? 'accept' : 'reject';
 };
 
+// A seat that was offered the trade answers with its own terms (`give` = what IT pays). One
+// counter per seat per offer; only the proposer (the current player) can close it.
+H.counterTrade = (s, a) => {
+  const t = s.trade;
+  if (!t || !t.to.includes(a.pid)) fail('Không có lời mời nào cho bạn.');
+  if (a.tradeId != null && a.tradeId !== t.id) fail('Lời mời đó không còn nữa.');
+  if (t.responses[a.pid] === 'counter') fail('Bạn đã mặc cả lời mời này rồi.');
+  if (!validOffer(a.give) || !validOffer(a.get)) fail('Lời mời không hợp lệ.');
+  if (!handSize(a.give) || !handSize(a.get)) fail('Lời mời phải có cả thứ đưa và thứ nhận.');
+  if (RES.some(r => (a.give[r] || 0) && (a.get[r] || 0))) fail('Không thể đưa và đòi cùng một loại tài nguyên.');
+  if (!canAfford(s.players[a.pid]!.res, a.give)) fail('Bạn không có thứ mình định đưa.');
+  const give = zeroRes(), get = zeroRes();
+  for (const r of RES) {
+    give[r] = a.get[r] || 0; // what the proposer pays = what the counter asks for
+    get[r] = a.give[r] || 0;
+  }
+  (t.counters ||= {})[a.pid] = { give, get };
+  t.responses[a.pid] = 'counter';
+  log(s, `🔁 @${a.pid} mặc cả với @${t.from}.`, a.pid);
+};
+
 H.confirmTrade = (s, a) => {
   const t = s.trade;
   if (!t || t.from !== a.pid) fail('Bạn chưa đưa ra lời mời nào.');
-  if (t.responses[a.with] !== 'accept') fail('Người đó chưa đồng ý.');
+  const c = a.counter ? t.counters && t.counters[a.with] : null;
+  if (a.counter ? t.responses[a.with] !== 'counter' || !c : t.responses[a.with] !== 'accept') fail('Người đó chưa đồng ý.');
+  const terms = c || { give: t.give, get: t.get };
   const p = s.players[a.pid]!, o = s.players[a.with]!;
-  if (!canAfford(p.res, t.give) || !canAfford(o.res, t.get)) {
+  if (!canAfford(p.res, terms.give) || !canAfford(o.res, terms.get)) {
+    if (a.counter) fail('Có người không còn đủ tài nguyên cho lời mặc cả này.'); // the other answers still stand
     s.trade = null;
     fail('Có người không còn đủ tài nguyên nữa.');
   }
   for (const r of RES) {
-    p.res[r] += t.get[r] - t.give[r];
-    o.res[r] += t.give[r] - t.get[r];
+    p.res[r] += terms.get[r] - terms.give[r];
+    o.res[r] += terms.give[r] - terms.get[r];
   }
   s.trade = null;
-  s.fx.push({ kind: 'trade', a: a.pid, b: a.with, give: t.give, get: t.get });
+  s.fx.push({ kind: 'trade', a: a.pid, b: a.with, give: terms.give, get: terms.get });
   log(s, `🤝 @${a.pid} và @${a.with} trao đổi với nhau.`, a.pid);
 };
 
@@ -1114,6 +1153,7 @@ function advanceTurn(s: GameState) {
   s.turn++;
   s.devPlayed = false;
   s.freeRoads = 0;
+  s.sbp = null;
   s.phase = 'roll';
   if (wrapped) {
     s.round++;
@@ -1123,9 +1163,39 @@ function advanceTurn(s: GameState) {
   log(s, `🎲 Lượt của @${s.current}.`, s.current);
 }
 
+/** 5-6 player special building phase is on for this game right now */
+function sbpOn(s: GameState): boolean {
+  return s.config.rules.specialBuild === true && s.players.filter(p => !p.retired).length >= 5;
+}
+
 H.endTurn = (s, a) => {
   assertMain(s, a);
-  advanceTurn(s);
+  if (!sbpOn(s)) return advanceTurn(s);
+  // every other seat, clockwise from the next one, may build before the next turn starts
+  const n = s.players.length;
+  const queue: number[] = [];
+  for (let k = 1; k < n; k++) {
+    const pid = (s.current + k) % n;
+    if (!s.players[pid]!.retired) queue.push(pid);
+  }
+  s.trade = null;
+  s.sbp = { queue, idx: 0 };
+  s.phase = 'specialBuild';
+  log(s, '🔨 Pha xây đặc biệt: mọi người lần lượt được xây.');
+};
+
+function nextSpecialBuilder(s: GameState) {
+  const sb = s.sbp!;
+  sb.idx++;
+  if (sb.idx >= sb.queue.length) {
+    s.sbp = null;
+    advanceTurn(s);
+  }
+}
+
+H.passBuild = (s, a) => {
+  if (s.phase !== 'specialBuild' || a.pid !== sbpActor(s)) fail('Chưa tới lượt bạn.');
+  nextSpecialBuilder(s);
 };
 
 // ---- seat management (host only: disconnections, votes) ----
@@ -1165,6 +1235,7 @@ H.retirePlayer = (s, a) => {
     else if (s.trade.to.includes(pid)) {
       s.trade.to = s.trade.to.filter(x => x !== pid);
       delete s.trade.responses[pid];
+      if (s.trade.counters) delete s.trade.counters[pid];
       if (!s.trade.to.length) s.trade = null;
     }
   }
@@ -1204,14 +1275,28 @@ H.retirePlayer = (s, a) => {
     return;
   }
   if (s.phase === 'discard' && !Object.keys(s.pendingDiscards).length) s.phase = s.config.rules.noRobber ? 'main' : 'robber';
+  if (s.phase === 'specialBuild' && s.sbp && s.current !== pid) {
+    const sb = s.sbp;
+    const at = sb.queue.indexOf(pid);
+    if (at >= 0) {
+      sb.queue.splice(at, 1);
+      if (at < sb.idx) sb.idx--;
+      if (sb.idx >= sb.queue.length) {
+        s.sbp = null;
+        advanceTurn(s);
+      }
+    }
+    return;
+  }
   if (s.current === pid && s.phase !== 'gameOver') {
+    s.sbp = null;
     s.pendingDiscards = {};
     advanceTurn(s);
   }
 };
 
 // actions that leave the trade on the table when the current player makes them
-const TRADE_ACTIONS = new Set(['proposeTrade', 'respondTrade', 'confirmTrade', 'cancelTrade']);
+const TRADE_ACTIONS = new Set(['proposeTrade', 'respondTrade', 'counterTrade', 'confirmTrade', 'cancelTrade']);
 
 export function applyAction(s: GameState, a: Action): ApplyResult {
   s.fx = [];

@@ -60,7 +60,8 @@ type ModalSpec =
   | { kind: 'gameOver' }
   | { kind: 'victims'; tile: number; v: number; victims: number[] }
   | { kind: 'monopoly'; v: number }
-  | { kind: 'yop'; v: number };
+  | { kind: 'yop'; v: number }
+  | { kind: 'counter'; v: number; tradeId: number };
 
 export const modal = signal<ModalSpec | null>(null);
 /** the build button armed on the toolbar (road / settlement / city), picked on the board next */
@@ -97,6 +98,7 @@ function computeViewer(st: GameState, prev: number, actors: number[]): number {
   if (!humans.length) return -1;
   const mine = actors.filter(p => humans.includes(p));
   if (st.phase === 'discard' && mine.length) return mine.includes(prev) ? prev : mine[0]!;
+  if (st.phase === 'specialBuild' && mine.length) return mine[0]!; // the seat building out of turn
   if (mine.includes(st.current)) return st.current;
   if (st.phase === 'setup' && mine.length) return mine[0]!;
   if (humans.includes(prev)) return prev;
@@ -172,6 +174,17 @@ export const inter = computed<Interaction | null>(() => {
     if (st.setup.step === 'settlement') return mk('settlement', G.legalSetupSettlements(g, v), vid => App.dispatch({ type: 'placeSettlement', pid: v, vid }));
     return mk('road', G.legalSetupRoads(g, v), eid => App.dispatch({ type: 'placeRoad', pid: v, eid }));
   }
+  if (st.phase === 'specialBuild') {
+    const w = pick.value;
+    if (G.sbpActor(st) !== v || !w) return null;
+    const list = w === 'road' ? legalRoads.value : w === 'settlement' ? legalSettlements.value : legalCities.value;
+    return mk(w, list, at => {
+      if (App.dispatch({ type: 'build', pid: v, what: w, at })) {
+        const p = state.peek()!.players[v]!;
+        if (!G.canAfford(p.res, COSTS[w])) pick.value = null;
+      }
+    });
+  }
   if (st.current !== v) return null;
   if (st.phase === 'robber') return mk('robber', G.legalRobberTiles(g, v), tile => robberPick(v, tile));
   if (st.phase === 'roadBuilding') return mk('road', legalRoads.value, at => App.dispatch({ type: 'build', pid: v, what: 'road', at }));
@@ -191,7 +204,7 @@ export const inter = computed<Interaction | null>(() => {
 // ---------- texts ----------
 export const PHASE_TEXT: Record<string, string> = {
   setup: 'Đặt nhà đầu ván', roll: 'Tung xúc xắc', main: 'Xây dựng và giao dịch', discard: 'Bỏ thẻ',
-  robber: 'Di chuyển kẻ trộm', roadBuilding: 'Xây đường miễn phí', gameOver: 'Kết thúc ván',
+  robber: 'Di chuyển kẻ trộm', roadBuilding: 'Xây đường miễn phí', specialBuild: 'Pha xây đặc biệt', gameOver: 'Kết thúc ván',
 };
 export const costIcons = (c: Partial<Record<string, number>>): string =>
   Object.entries(c).map(([r, n]) => TILE_INFO[r as keyof typeof TILE_INFO].icon.repeat(n || 0)).join('');
@@ -208,6 +221,11 @@ function bannerText(st: GameState, v: number, interKind: string | undefined): st
   if (st.phase === 'discard') {
     const n = Object.keys(st.pendingDiscards).length;
     return `🗑️ Ra 7! Đang bỏ thẻ (còn ${n} người)`;
+  }
+  if (st.phase === 'specialBuild') {
+    const b = G.sbpActor(st);
+    if (b === v) return interKind ? ({ road: 'Chọn chỗ làm đường (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '' : '🔨 Pha xây đặc biệt: bạn được xây hoặc mua thẻ';
+    return `🔨 ${b != null ? st.players[b]!.name : ''} đang xây chen lượt`;
   }
   if (st.current !== v) return st.trade ? `🤝 ${cur.name} mời giao dịch` : `Lượt của ${cur.name}`;
   if (st.phase === 'robber') return '🦹 Chọn chỗ đặt kẻ trộm';
@@ -236,7 +254,11 @@ interface OfferInfo {
   iAmProposer: boolean;
   online: boolean;
   /** one row per invited seat */
-  rows: { pid: number; name: string; r: 'accept' | 'reject' | null; mine: boolean; can: boolean }[];
+  rows: {
+    pid: number; name: string; r: 'accept' | 'reject' | 'counter' | null; mine: boolean; can: boolean;
+    /** counter-offer as the other seat sees it: what it gives / wants, and whether the proposer can pay it */
+    counter: { give: Hand; get: Hand; ok: boolean } | null;
+  }[];
 }
 
 export const offer = select<OfferInfo | null>(() => {
@@ -254,7 +276,9 @@ export const offer = select<OfferInfo | null>(() => {
     id: tr.id, from: tr.from, fromName: from.name, fromColor: from.color, give: tr.give, get: tr.get, iAmProposer, online: App.isOnline(),
     rows: tr.to.map(pid => {
       const o = st.players[pid]!;
-      return { pid, name: o.name, r: tr.responses[pid] ?? null, mine: mine.includes(pid), can: G.canAfford(o.res, tr.get) };
+      const c = tr.counters && tr.counters[pid];
+      const counter = c ? { give: c.get, get: c.give, ok: G.canAfford(from.res, c.give) } : null;
+      return { pid, name: o.name, r: tr.responses[pid] ?? null, mine: mine.includes(pid), can: G.canAfford(o.res, tr.get), counter };
     }),
   };
 }, jsonEq);

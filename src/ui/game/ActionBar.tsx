@@ -149,7 +149,7 @@ type ActModel =
   | { k: 'roll'; v: number }
   | { k: 'robber' }
   | { k: 'roads' }
-  | { k: 'main'; v: number; pick: BuildKind | null; road: [boolean, number]; settlement: [boolean, number]; city: [boolean, number]; dev: boolean; tradeBusy: boolean };
+  | { k: 'main' | 'sbp'; v: number; pick: BuildKind | null; road: [boolean, number]; settlement: [boolean, number]; city: [boolean, number]; dev: boolean; tradeBusy: boolean };
 
 const missing = (res: Record<string, number>, cost: Partial<Record<string, number>>): string =>
   Object.entries(cost).filter(([r, n]) => (res[r] || 0) < (n || 0)).map(([r, n]) => TILE_INFO[r as keyof typeof TILE_INFO].icon.repeat((n || 0) - (res[r] || 0))).join('');
@@ -160,7 +160,8 @@ const actModel = select<ActModel>(() => {
   const st = cur()!, v = seat.value;
   const p = st.players[v];
   if (!p) return { k: 'none' };
-  const myTurn = st.current === v;
+  const sbp = st.phase === 'specialBuild';
+  const myTurn = sbp ? G.sbpActor(st) === v : st.current === v;
   if (st.phase === 'gameOver') return { k: 'over' };
   if (st.phase === 'setup' || !myTurn) {
     const need = st.pendingDiscards[v];
@@ -187,10 +188,10 @@ const actModel = select<ActModel>(() => {
   if (st.phase === 'roll') return { k: 'roll', v };
   if (st.phase === 'robber') return { k: 'robber' };
   if (st.phase === 'roadBuilding') return { k: 'roads' };
-  if (st.phase !== 'main') return { k: 'none' };
+  if (st.phase !== 'main' && !sbp) return { k: 'none' };
   const can = (what: BuildKind, left: number, legal: number[]): [boolean, number] => [left > 0 && G.canAfford(p.res, COSTS[what]) && legal.length > 0, left];
   return {
-    k: 'main', v, pick: pick.value,
+    k: sbp ? 'sbp' : 'main', v, pick: pick.value,
     road: can('road', p.roadsLeft, legalRoads.value),
     settlement: can('settlement', p.settlementsLeft, legalSettlements.value),
     city: can('city', p.citiesLeft, legalCities.value),
@@ -229,6 +230,7 @@ function Actions(): JSX.Element {
       case 'robber': return <div class="waiting">{px('🦹 Chạm vào một ô trên bàn cờ', 18)}</div>;
       case 'roads': return <button type="button" class="btn" onClick={() => void App.dispatch({ type: 'endRoadBuilding', pid: v })}>Xong phần làm đường</button>;
       case 'main':
+      case 'sbp':
         return [
           ...BUILD.map(([what, label, icon]) => {
             const [ok, left] = m[what];
@@ -247,9 +249,13 @@ function Actions(): JSX.Element {
             <span class="bicon"><PixelIcon emoji="🃏" size={28} /></span>
             <span>Thẻ<span class="cost">{px(costIcons(COSTS.dev), 14)}</span></span>
           </button>,
-          <button type="button" class="btn" disabled={m.tradeBusy} onClick={() => (modal.value = { kind: 'trade' })}>{px('🤝 Giao dịch', 18)}</button>,
-          <button type="button" class="btn sm ghost" title="Gợi ý" onClick={() => showHint(m.v)}>{px('💡', 18)}</button>,
-          <button type="button" class="btn green" onClick={() => void App.dispatch({ type: 'endTurn', pid: m.v })}>{px('✅ Kết thúc', 18)}</button>,
+          ...(m.k === 'sbp'
+            ? [<button type="button" class="btn green" onClick={() => { pick.value = null; void App.dispatch({ type: 'passBuild', pid: m.v }); }}>{px('⏭️ Xong', 18)}</button>]
+            : [
+                <button type="button" class="btn" disabled={m.tradeBusy} onClick={() => (modal.value = { kind: 'trade' })}>{px('🤝 Giao dịch', 18)}</button>,
+                <button type="button" class="btn sm ghost" title="Gợi ý" onClick={() => showHint(m.v)}>{px('💡', 18)}</button>,
+                <button type="button" class="btn green" onClick={() => void App.dispatch({ type: 'endTurn', pid: m.v })}>{px('✅ Kết thúc', 18)}</button>,
+              ]),
         ];
     }
   };

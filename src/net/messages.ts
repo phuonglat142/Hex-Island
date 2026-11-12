@@ -49,6 +49,8 @@ export type WireState = Omit<GameState, 'config' | 'board' | 'players' | 'devDec
   board: Omit<Board, (typeof STATIC_KEYS)[number] | 'tiles'> & { tiles?: Board['tiles'] };
   players: Omit<Player, 'flag'>[];
   devDeckN: number;
+  /** real map seed, only once the game is over */
+  seed?: number;
 };
 
 // ---------- host -> client ----------
@@ -83,7 +85,7 @@ const isArr = (v: unknown): v is unknown[] => Array.isArray(v);
 
 const ACTION_TYPES: ReadonlySet<string> = new Set<ActionType>([
   'placeSettlement', 'placeRoad', 'roll', 'discard', 'moveRobber', 'build', 'endRoadBuilding', 'buyDev', 'playDev',
-  'bankTrade', 'proposeTrade', 'respondTrade', 'confirmTrade', 'cancelTrade', 'endTurn', 'setController', 'retirePlayer',
+  'bankTrade', 'proposeTrade', 'respondTrade', 'counterTrade', 'confirmTrade', 'cancelTrade', 'endTurn', 'passBuild', 'setController', 'retirePlayer',
 ]);
 
 /** Shape check only (type known, pid numeric): the engine validates the rest and rejects garbage with an error. */

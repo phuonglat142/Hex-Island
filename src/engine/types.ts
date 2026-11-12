@@ -139,6 +139,8 @@ export interface Rules {
   maxCities: number;
   randomStart: boolean;
   noRobber: boolean;
+  /** 5-6 player rule: after each turn every other player may build (only with 5+ players in the game) */
+  specialBuild?: boolean;
 }
 
 export interface Modes {
@@ -183,7 +185,7 @@ export interface Rng {
 }
 
 // ---------- game state ----------
-export type Phase = 'setup' | 'roll' | 'main' | 'discard' | 'robber' | 'roadBuilding' | 'gameOver';
+export type Phase = 'setup' | 'roll' | 'main' | 'discard' | 'robber' | 'roadBuilding' | 'specialBuild' | 'gameOver';
 
 export interface Building {
   owner: number;
@@ -255,7 +257,7 @@ export interface GameEvent {
   pid?: number;
 }
 
-type TradeResponse = 'accept' | 'reject' | null;
+type TradeResponse = 'accept' | 'reject' | 'counter' | null;
 
 export interface Trade {
   id: number;
@@ -264,6 +266,8 @@ export interface Trade {
   get: Hand;
   to: number[];
   responses: Record<string, TradeResponse>;
+  /** counter-offers by seat, written from the proposer's side (`give` = what the proposer pays) */
+  counters?: Record<string, { give: Hand; get: Hand }>;
 }
 
 export interface LogEntry {
@@ -300,6 +304,10 @@ export interface GameState {
   diceDeck: [number, number][];
   pendingDiscards: Record<string, number>;
   robberReturn: Phase;
+  /** where Road Building goes back to: 'roll' when it was played before rolling */
+  roadReturn?: 'roll' | 'main';
+  /** special building phase: the seats still to build after `current` ended the turn */
+  sbp?: { queue: number[]; idx: number } | null;
   freeRoads: number;
   devPlayed: boolean;
   trade: Trade | null;
@@ -347,9 +355,11 @@ export type Action =
   | { type: 'bankTrade'; pid: number; give: Res; get: Res }
   | { type: 'proposeTrade'; pid: number; give: Partial<Hand>; get: Partial<Hand>; to?: number[] }
   | { type: 'respondTrade'; pid: number; accept: boolean; tradeId?: number | null }
-  | { type: 'confirmTrade'; pid: number; with: number }
+  | { type: 'counterTrade'; pid: number; give: Partial<Hand>; get: Partial<Hand>; tradeId?: number | null }
+  | { type: 'confirmTrade'; pid: number; with: number; counter?: boolean }
   | { type: 'cancelTrade'; pid: number }
   | { type: 'endTurn'; pid: number }
+  | { type: 'passBuild'; pid: number }
   | { type: 'setController'; pid: number; kind: SeatKind }
   | { type: 'retirePlayer'; pid: number };
 

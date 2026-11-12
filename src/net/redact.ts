@@ -59,6 +59,8 @@ export function redactFor(state: GameState, seat: number | null | undefined): Ga
   const hiding = !over;
   const out: GameState = {
     ...s,
+    // the seed rebuilds the whole game (deck order, face-down tiles, every future roll): only after the end
+    config: over ? s.config : { ...s.config, seed: 0 },
     rng: { s: 0 },
     diceDeck: [],
     devDeck: Array.from({ length: s.devDeck.length }, () => BLANK_DEV),
@@ -81,7 +83,6 @@ export function toWire(s: GameState, withTiles: boolean): WireState {
     board[k] = (s.board as unknown as Record<string, unknown>)[k];
   }
   const { config, devDeck, players, board: _b, ...rest } = s;
-  void config;
   void _b;
   return {
     ...rest,
@@ -89,5 +90,7 @@ export function toWire(s: GameState, withTiles: boolean): WireState {
     log: s.log.slice(-40),
     players: players.map(({ flag, ...p }) => (void flag, p)),
     devDeckN: devDeck.length,
+    // the real map seed is shown once the game is over (redactFor blanked it before that)
+    ...(s.phase === 'gameOver' && config.seed ? { seed: config.seed } : {}),
   };
 }

@@ -102,7 +102,9 @@ function clientRetry(net: Net) {
 
 /** rebuild a full-shaped GameState (for the UI's queries) from what the host sent */
 function fromWire(net: Net, w: WireState, tiles: NonNullable<Net['tiles']>): GameState {
-  const { devDeckN, players, board, ...rest } = w;
+  const { devDeckN, players, board, seed, ...rest } = w;
+  // mutate in place: the game screen tells games apart by the config object
+  if (seed) net.config!.seed = seed;
   return {
     ...rest,
     config: net.config!,

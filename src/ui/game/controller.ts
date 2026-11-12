@@ -56,13 +56,14 @@ function paintBoard(): void {
 export function startController(): () => void {
   resetFx();
   resetSignals();
-  const seed0 = store.state.peek()?.config.seed;
+  // guests never get the seed while playing (it is 0): tell games apart by the config object
+  const cfg0 = store.state.peek()?.config;
   let first = true;
   const stopMain = effect(() => {
     const st = cur();
     const v = seat.value;
     // a rematch swaps the state while this screen is still up (it is replaced right after): do nothing
-    if (!st || st.config.seed !== seed0) return;
+    if (!st || st.config !== cfg0) return;
     untracked(() => {
       store.viewer.value = v;
       if (!first) processFx(st);

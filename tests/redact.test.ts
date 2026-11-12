@@ -35,6 +35,12 @@ describe('redactFor', () => {
         const r = redactFor(s, seat);
         checked++;
         expect(r.rng).toEqual({ s: 0 });
+        // the seed rebuilds the deck order, face-down tiles and every future roll
+        if (over) expect(r.config.seed).toBe(s.config.seed);
+        else expect(r.config.seed).toBe(0);
+        const w = toWire(r, true);
+        expect('config' in w).toBe(false);
+        if (!over) expect(w.seed).toBeUndefined();
         expect(r.diceDeck).toEqual([]);
         expect(r.devDeck.length).toBe(s.devDeck.length);
         expect(new Set(r.devDeck).size).toBeLessThanOrEqual(1);
@@ -183,5 +189,17 @@ describe('BoardVersion', () => {
     const a = tilesFingerprint(s.board.tiles);
     s.board.tiles[0]!.revealed = !s.board.tiles[0]!.revealed;
     expect(tilesFingerprint(s.board.tiles)).not.toBe(a);
+  });
+});
+
+describe('seed', () => {
+  test('the real seed only travels once the game is over', () => {
+    const s = createGame(makeConfig(5));
+    expect(s.config.seed).not.toBe(0);
+    expect(redactFor(s, 1).config.seed).toBe(0);
+    expect(redactFor(s, 1).config).not.toBe(s.config); // the host's own config is untouched
+    expect(s.config.seed).not.toBe(0);
+    s.phase = 'gameOver';
+    expect(toWire(redactFor(s, 1), true).seed).toBe(s.config.seed);
   });
 });

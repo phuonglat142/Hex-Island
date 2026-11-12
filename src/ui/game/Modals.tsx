@@ -113,6 +113,40 @@ function DiscardModal({ v, need }: { v: number; need: number }): JSX.Element {
   );
 }
 
+// ---------------- counter-offer ----------------
+/** answer a trade offer with other terms: starts from the offer seen from this seat */
+function CounterModal({ v, tradeId }: { v: number; tradeId: number }): JSX.Element {
+  const st = cur()!;
+  const tr = st.trade;
+  const p = st.players[v]!;
+  const [give, setGive] = useState<Hand>(() => (tr ? { ...tr.get } : zeroHand()));
+  const [get, setGet] = useState<Hand>(() => (tr ? { ...tr.give } : zeroHand()));
+  if (!tr || tr.id !== tradeId) {
+    return (
+      <Modal onClose={closeModal}>
+        <h2>Mặc cả</h2>
+        <p>Lời mời này không còn nữa.</p>
+        <div class="row"><Button variant="ghost" onClick={closeModal}>Đóng</Button></div>
+      </Modal>
+    );
+  }
+  const same = RES.every(r => give[r] === tr.get[r] && get[r] === tr.give[r]);
+  const valid = !same && G.handSize(give) > 0 && G.handSize(get) > 0 && G.canAfford(p.res, give) && !RES.some(r => give[r] && get[r]);
+  return (
+    <Modal onClose={closeModal}>
+      <h2>{px(`🔁 Mặc cả với ${st.players[tr.from]!.name}`, 24)}</h2>
+      <div class="section-label">Bạn đưa</div>
+      <div class="steppers">{RES.map(r => <Stepper r={r} n={give[r]} max={p.res[r]} onChange={n => setGive({ ...give, [r]: n })} />)}</div>
+      <div class="section-label">Bạn nhận</div>
+      <div class="steppers">{RES.map(r => <Stepper r={r} n={get[r]} max={null} onChange={n => setGet({ ...get, [r]: n })} />)}</div>
+      <div class="row">
+        <Button variant="ghost" onClick={closeModal}>Đóng</Button>
+        <Button variant="primary" disabled={!valid} onClick={() => { closeModal(); App.dispatch({ type: 'counterTrade', pid: v, give, get, tradeId }); }}>Gửi lời mặc cả</Button>
+      </div>
+    </Modal>
+  );
+}
+
 // ---------------- trade ----------------
 type Tab = 'bank' | 'players';
 
@@ -372,6 +406,7 @@ export function ModalHost(): JSX.Element | null {
   if (!m) return null;
   switch (m.kind) {
     case 'trade': return <TradeModal key="trade" />;
+    case 'counter': return <CounterModal key="counter" v={m.v} tradeId={m.tradeId} />;
     case 'menu': return <MenuModal key="menu" />;
     case 'gameOver': return <GameOverModal key="gameOver" />;
     case 'victims': return <VictimsModal key="victims" tile={m.tile} v={m.v} victims={m.victims} />;
