@@ -11,12 +11,39 @@ import { px } from '@ui/components/PixelIcon';
 import { toast } from '@ui/dom';
 import { Banner, Offer, RollLog } from './BoardOverlays';
 import { boardPing } from './fx';
-import { boardNudge, boards, boardSig, countRender, pick, topView } from './signals';
+import { boards, boardSig, countRender, pick, topView } from './signals';
+
+type Stage = 'start' | 'load' | 'build' | 'compile' | 'done';
+// where the bar heads for in each step (it creeps there slowly: the steps take a while on a slow machine)
+const STAGES: Record<Stage, { pct: number; text: string }> = {
+  start: { pct: 4, text: 'Chuẩn bị...' },
+  load: { pct: 30, text: 'Tải mô hình và texture...' },
+  build: { pct: 58, text: 'Dựng địa hình, cây cối, bến cảng...' },
+  compile: { pct: 90, text: 'Chuẩn bị đồ hoạ (lần đầu sẽ lâu hơn)...' },
+  done: { pct: 100, text: 'Xong!' },
+};
+
+/** Covers the board until the 3D island is drawn. Its animations only move `transform` / `opacity`, so they
+ *  keep running on the compositor while a shader compile holds the main thread. */
+function BoardLoader({ stage }: { stage: Stage }): JSX.Element {
+  const st = STAGES[stage];
+  return (
+    <div class={'board-loading' + (stage === 'done' ? ' out' : '')} role="status" aria-live="polite">
+      <div class="bl-card">
+        <div class="bl-isle">{px('🏝️', 56)}</div>
+        <Jit class="bl-title" text="Đang dựng đảo..." size={22} />
+        <div class="bl-bar"><i style={{ transform: `scaleX(${st.pct / 100})` }} class={stage === 'done' ? 'fast' : ''} /><b /></div>
+        <div class="bl-step">{st.text}</div>
+      </div>
+    </div>
+  );
+}
 
 export function BoardHost(): JSX.Element {
   countRender('BoardHost');
   const wrap = useRef<HTMLElement>(null);
   const [loading, setLoading] = useState(true);
+  const [stage, setStage] = useState<Stage>('start');
 
   useEffect(() => {
     const el = wrap.current!;
@@ -29,59 +56,46 @@ export function BoardHost(): JSX.Element {
       App.botsHeld = false;
       App.scheduleBots();
     };
-    // the flat map is up at once (no blank board while three.js, the island and the shaders get ready), drawn
-    // over the 3D canvas, which builds underneath (`boards.warming` gets the same renders) and takes over when ready
-    const flat = new BoardView(el);
-    flat.placeholder(true);
-    el.classList.add('b3d-warming');
-    board = flat;
-    boards.any = flat;
-    boardSig.value = flat;
     (async () => {
       try {
+        setStage('load');
         const { Board3D } = await import('@board/Board3D');
         if (dead) return;
         const b = await Board3D.create(el);
         if (dead) return b.dispose();
-        boards.warming = b;
-        boardNudge.value++; // paint once more so the 3D board gets the current state (and starts its build)
-        await b.ready;
-        boards.warming = null;
-        if (dead) return b.dispose();
-        // swap only once the island has been drawn (two frames: the first one may still be in flight)
-        await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
-        if (dead) return b.dispose();
+        b.onStage = s => { if (!dead) setStage(s); };
         board = b;
         boards.d3 = b;
-        boards.any = b;
         b.onSlow = () => toast('Máy hơi chậm: thử chọn mức "Máy yếu" trong ☰ Menu → Đồ họa 3D', 'info', 7000);
         b.onPing = boardPing;
-        boardSig.value = b;
-        flat.dispose();
-        el.classList.remove('b3d-warming');
       } catch (e) {
         console.error(e);
-        boards.warming = null;
         if (dead) return;
-        // the flat map simply stays
         toast('Không tải được bản đồ 3D (mất mạng hoặc thiếu WebGL?): chuyển sang bản đồ phẳng', 'error', 4000);
-        flat.placeholder(false);
-        el.classList.remove('b3d-warming');
-        for (const c of [...el.querySelectorAll('canvas.board-3d, .labels-3d, .vignette-css')]) c.remove();
+        board = new BoardView(el);
       }
-      if (dead) return;
+      boards.any = board;
+      boardSig.value = board; // the controller effect draws the island; shaders compile (compileAsync) while the loader is up
+      if (boards.d3 && boards.d3.ready) {
+        await boards.d3.ready;
+        if (dead) return;
+        // the bar fills up, then the loader fades out over the island
+        setStage('done');
+        await new Promise(res => setTimeout(res, 450));
+        if (dead) return;
+      }
       setLoading(false);
       release();
-    })();
+    })().catch(e => {
+      console.error(e);
+      if (!dead) release(); // never keep the bots waiting on a board that failed
+    });
     return () => {
       dead = true;
       App.botsHeld = false;
       boardSig.value = null;
-      const w = boards.warming;
-      boards.any = boards.d3 = boards.warming = null;
+      boards.any = boards.d3 = null;
       if (board) board.dispose();
-      if (board !== flat) flat.dispose();
-      if (w && w !== board) w.dispose();
     };
   }, []);
 
@@ -111,7 +125,7 @@ export function BoardHost(): JSX.Element {
         <button type="button" class="btn" title="Thu nhỏ" onClick={() => zoom(1 / 1.25)}>−</button>
         <button type="button" class="btn" title="Căn giữa" onClick={() => boards.any?.resetView()}>⤢</button>
       </div>
-      {loading && <Jit class="board-loading mini" text="🏝️ Đang dựng đảo 3D..." size={14} />}
+      {loading && <BoardLoader stage={stage} />}
     </section>
   );
 }

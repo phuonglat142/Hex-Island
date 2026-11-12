@@ -130,6 +130,8 @@ export class Board3D implements BoardRenderer {
   onPing: ((x: number, z: number) => void) | undefined;
   /** called once when the adaptive ladder ran out of cheap steps and the machine is still slow */
   onSlow: (() => void) | undefined;
+  /** the first build's steps, for the game screen's loader: 'build' = the island is generated, 'compile' = shaders */
+  onStage: ((stage: 'build' | 'compile') => void) | undefined;
   lastSt: BState | undefined;
   lastView: BoardViewState = {};
   bounds: BBounds | undefined;
@@ -936,6 +938,15 @@ export class Board3D implements BoardRenderer {
   private compiling = false;
   private async compile() {
     this.compiling = true; // no frames while the shaders build: the loader covers the canvas
+    if (this.onStage) {
+      this.onStage('compile');
+      // let the loader show this step before the compile (it can hold the main thread on a slow GPU)
+      await new Promise(res => {
+        requestAnimationFrame(() => setTimeout(res, 0));
+        setTimeout(res, 120); // rAF never fires in a hidden tab
+      });
+      if (!this.alive) return this.markReady();
+    }
     // the pieces are compiled too, though none is on the board yet (see pieceWarmup); never on the menu diorama
     const warm = this.diorama ? null : pieceWarmup(this, [this.depthOnly, this.visMat, this.allMat, ...(this.overlay ? [this.overlay.mat] : [])]);
     try {
@@ -991,6 +1002,7 @@ export class Board3D implements BoardRenderer {
 
   /** Asks the worker for the island of this state; the latest request wins (older results are dropped). */
   private requestStatic(st: BState, faceDown: boolean, key: string, detail: string) {
+    if (!this.field && this.onStage) this.onStage('build');
     const bd = st.board;
     const p = this.params;
     const input: GenInput = {

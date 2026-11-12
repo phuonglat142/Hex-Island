@@ -82,8 +82,7 @@ export const confettiOn = signal(0);
 export const boardNudge = signal(0);
 
 // ---------- boards ----------
-/** `warming`: the 3D board while it builds under the flat placeholder map (it gets every render too, see BoardHost) */
-export const boards: { any: BoardRenderer | null; d3: Board3D | null; warming: BoardRenderer | null } = { any: null, d3: null, warming: null };
+export const boards: { any: BoardRenderer | null; d3: Board3D | null } = { any: null, d3: null };
 export const boardSig = signal<BoardRenderer | null>(null);
 
 // ---------- viewer & privacy ----------

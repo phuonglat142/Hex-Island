@@ -187,11 +187,21 @@ input[type=range] { accent-color: var(--sand); }
 .hot3d:hover::before { animation: none; opacity: 0; }
 @keyframes hotGlow { 50% { opacity: 1; } }
 .board-wrap { background: var(--ink); }
-.board-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--sand); font-family: var(--display); font-size: 20px; text-shadow: 3px 3px 0 var(--wine); pointer-events: none; }
-/* while the 3D island builds: the flat map covers the canvas (its labels and hotspots stay hidden), a small note in a corner */
-.board-loading.mini { inset: auto; left: 12px; bottom: 12px; display: block; white-space: nowrap; font-size: 14px; z-index: 6; }
-.board-wrap .board-svg.board-placeholder { position: absolute; inset: 0; z-index: 2; background: var(--ink); }
-.board-wrap.b3d-warming .labels-3d, .board-wrap.b3d-warming .vignette-css { visibility: hidden; }
+.board-loading { position: absolute; inset: 6px 0; z-index: 7; /* 6px: the gold rules of the top bar and the action bar stay visible */ display: grid; place-items: center; color: var(--sand); font-family: var(--display); font-size: 20px; text-shadow: 3px 3px 0 var(--wine);
+  background: radial-gradient(ellipse at center, #1f4f6e 0%, #122b40 60%, #0b1624 100%); transition: opacity .4s ease; }
+.board-loading.out { opacity: 0; pointer-events: none; }
+.bl-card { display: grid; justify-items: center; gap: 10px; width: min(340px, 80%); text-align: center; }
+.bl-isle { animation: blBob 1.6s ease-in-out infinite; will-change: transform; filter: drop-shadow(0 6px 0 rgba(0,0,0,.35)); }
+@keyframes blBob { 50% { transform: translateY(-8px) rotate(-3deg); } }
+.bl-title { font-size: 24px; }
+.bl-bar { position: relative; width: 100%; height: 16px; background: var(--ink); box-shadow: 0 0 0 3px var(--dusk), 0 0 0 6px var(--ink); overflow: hidden; }
+.bl-bar i { position: absolute; inset: 0; background: linear-gradient(180deg, var(--lime), var(--green)); transform-origin: left; transform: scaleX(0); transition: transform 3.5s cubic-bezier(.15,.75,.3,1); will-change: transform; }
+.bl-bar i.fast { transition-duration: .3s; }
+/* a glint that keeps sweeping even while the main thread is busy compiling */
+.bl-bar b { position: absolute; top: 0; bottom: 0; left: 0; width: 30%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: blGlint 1.3s linear infinite; will-change: transform; }
+@keyframes blGlint { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.bl-step { font-family: var(--font); font-size: 14px; color: var(--steel); text-shadow: none; min-height: 1.4em; }
+@media (prefers-reduced-motion: reduce) { .bl-isle, .bl-bar b { animation: none; } }
 .gfx-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 /* numbers: Baloo 2, bold and round so 3 vs 8 never blur together */
