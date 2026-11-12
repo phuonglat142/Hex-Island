@@ -133,6 +133,8 @@ export function Lobby({ arg }: { arg?: LobbyArg }): JSX.Element {
   const [, setTick] = useState(0);
   const [fillBots, setFillBots] = useState(true);
   const bump = () => setTick(n => n + 1);
+  // fetch the 3D board's kit and textures while the player sets up the game: the game screen's loader is shorter
+  useEffect(() => { void import('@board/Board3D').then(m => m.Board3D.preload(), () => undefined); }, []);
   const save = () => { storage(CFG_KEY, cfg); };
   const refresh = () => { save(); bump(); };
   const setCfg = (c: LCfg) => { cfgRef.current = c; refresh(); };

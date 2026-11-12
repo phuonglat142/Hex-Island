@@ -177,6 +177,16 @@ export class Board3D implements BoardRenderer {
   static SETTINGS_AO() { return SETTINGS.ao; }
   static SETTINGS_OUTLINE() { return SETTINGS.outline; }
 
+  /** Fetches and decodes what `create` will need for the current tier (kit, terrain textures, normals) ahead of
+   *  time: called from the lobby, so the game screen's loader only has the island build and the shader compile left. */
+  static preload(): Promise<void> {
+    const P = PARAMS[SETTINGS.quality], low = P.lowTextures;
+    return Promise.all([loadKit(), loadTextures(low).then(tex => (P.surfaceNormals ? ensureTerrainNormals(tex, low) : undefined))]).then(
+      () => undefined,
+      () => undefined, // create() tries again and reports the failure
+    );
+  }
+
   static async create(container: HTMLElement, opts: BoardOptions = {}): Promise<Board3D> {
     const low = opts.diorama ? true : PARAMS[SETTINGS.quality].lowTextures;
     const [kit, tex] = await Promise.all([loadKit(), loadTextures(low)]);
@@ -932,7 +942,7 @@ export class Board3D implements BoardRenderer {
       const jobs = [this.renderer.compileAsync(this.scene, this.camera)];
       if (warm) jobs.push(this.renderer.compileAsync(warm, this.camera, this.scene));
       // a timeout so a stuck compile can never keep the loader up
-      await Promise.race([Promise.all(jobs), new Promise(res => setTimeout(res, 6000))]);
+      await Promise.race([Promise.all(jobs), new Promise(res => setTimeout(res, 12000))]);
     } catch (e) {
       console.warn('compileAsync failed', e);
     }
