@@ -318,7 +318,8 @@ export function playableDev(s: GameState, pid: number): DevType[] {
   const types = new Set<DevType>();
   for (const c of p.dev) {
     if (c.type === 'vp' || c.turn >= s.turn) continue;
-    if (s.phase === 'main' || (s.phase === 'roll' && c.type === 'knight')) types.add(c.type);
+    // 5th edition: any development card may be played during your turn, even before rolling
+    if (s.phase === 'main' || s.phase === 'roll') types.add(c.type);
   }
   return [...types];
 }
@@ -931,7 +932,7 @@ H.build = (s, a) => {
     log(s, free ? `🛤️ @${a.pid} làm một đoạn đường miễn phí.` : `🛤️ @${a.pid} làm một đoạn đường.`, a.pid);
     if (free) {
       s.freeRoads--;
-      if (s.freeRoads <= 0 || p.roadsLeft <= 0 || !legalRoads(s, a.pid).length) s.phase = 'main';
+      if (s.freeRoads <= 0 || p.roadsLeft <= 0 || !legalRoads(s, a.pid).length) s.phase = s.roadReturn || 'main';
     }
   } else if (a.what === 'settlement') {
     if (p.settlementsLeft <= 0) fail('Bạn hết nhà rồi.');
@@ -960,7 +961,7 @@ H.build = (s, a) => {
 H.endRoadBuilding = (s, a) => {
   if (s.phase !== 'roadBuilding' || a.pid !== s.current) fail('Bạn đâu có đang xây đường.');
   s.freeRoads = 0;
-  s.phase = 'main';
+  s.phase = s.roadReturn || 'main';
 };
 
 H.buyDev = (s, a) => {
@@ -1003,6 +1004,7 @@ H.playDev = (s, a) => {
       break;
     case 'roadBuilding':
       s.freeRoads = Math.min(2, p.roadsLeft);
+      s.roadReturn = s.phase === 'roll' ? 'roll' : 'main'; // played before rolling: the roll still comes after
       if (s.freeRoads > 0 && legalRoads(s, a.pid).length) s.phase = 'roadBuilding';
       break;
     case 'yearOfPlenty':

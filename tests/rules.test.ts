@@ -355,3 +355,51 @@ t('historial de tiradas: quién y cuánto, como mucho 30', () => {
   eq(last.pid, 34 % 4);
   eq(last.sum, s.dice![0] + s.dice![1]);
 });
+
+// ---- rules audit (#2): every development card may be played before rolling ----
+t('thẻ tiến bộ dùng được trước khi tung, rồi vẫn phải tung', () => {
+  const s = fresh();
+  s.phase = 'roll';
+  s.turn = 3;
+  s.players[0]!.dev.push({ type: 'monopoly', turn: 1 }, { type: 'yearOfPlenty', turn: 1 });
+  give(s, 1, { ore: 2 });
+  ok(G.playableDev(s, 0).includes('monopoly'), 'độc quyền trước khi tung');
+  ok(act(s, { type: 'playDev', pid: 0, card: 'monopoly', res: 'ore' }).ok);
+  eq(s.phase, 'roll', 'vẫn ở phase tung');
+  eq(s.players[0]!.res.ore, 2);
+  // only one card per turn, also across the roll
+  eq(G.playableDev(s, 0), [], 'một thẻ mỗi lượt');
+  ok(act(s, { type: 'roll', pid: 0 }).ok);
+  eq(G.playableDev(s, 0), [], 'sau khi tung cũng không dùng thêm');
+});
+
+t('xây đường trước khi tung: xong 2 đoạn thì quay về phase tung', () => {
+  const s = fresh();
+  s.turn = 3;
+  const v = s.board.vertices.find(x => x.edges.length === 3)!;
+  s.buildings[v.id] = { owner: 0, type: 'settlement' };
+  s.phase = 'roll';
+  s.players[0]!.dev.push({ type: 'roadBuilding', turn: 1 });
+  ok(act(s, { type: 'playDev', pid: 0, card: 'roadBuilding' }).ok);
+  eq(s.phase, 'roadBuilding');
+  ok(act(s, { type: 'build', pid: 0, what: 'road', at: v.edges[0]! }).ok);
+  ok(act(s, { type: 'build', pid: 0, what: 'road', at: v.edges[1]! }).ok);
+  eq(s.phase, 'roll', 'quay lại để tung');
+  // ending early also goes back to the roll
+  const s2 = fresh();
+  s2.turn = 3;
+  s2.buildings[v.id] = { owner: 0, type: 'settlement' };
+  s2.phase = 'roll';
+  s2.players[0]!.dev.push({ type: 'roadBuilding', turn: 1 });
+  ok(act(s2, { type: 'playDev', pid: 0, card: 'roadBuilding' }).ok);
+  ok(act(s2, { type: 'endRoadBuilding', pid: 0 }).ok);
+  eq(s2.phase, 'roll');
+  // played after rolling: back to main as before
+  const s3 = fresh();
+  s3.turn = 3;
+  s3.buildings[v.id] = { owner: 0, type: 'settlement' };
+  s3.players[0]!.dev.push({ type: 'roadBuilding', turn: 1 });
+  ok(act(s3, { type: 'playDev', pid: 0, card: 'roadBuilding' }).ok);
+  ok(act(s3, { type: 'endRoadBuilding', pid: 0 }).ok);
+  eq(s3.phase, 'main');
+});

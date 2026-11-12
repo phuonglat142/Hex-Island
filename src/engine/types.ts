@@ -300,6 +300,8 @@ export interface GameState {
   diceDeck: [number, number][];
   pendingDiscards: Record<string, number>;
   robberReturn: Phase;
+  /** where Road Building goes back to: 'roll' when it was played before rolling */
+  roadReturn?: 'roll' | 'main';
   freeRoads: number;
   devPlayed: boolean;
   trade: Trade | null;
