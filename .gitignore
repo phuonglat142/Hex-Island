@@ -7,3 +7,4 @@ CatanVault/.obsidian/*
 !CatanVault/.obsidian/app.json
 *.log
 dist/
+fixtures/
