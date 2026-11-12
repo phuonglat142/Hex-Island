@@ -496,3 +496,111 @@ t('bot mặc cả và bot chốt lời mặc cả hợp lý', () => {
   ok(counters > 0, 'có mặc cả');
   void closed;
 });
+
+// ---- rules audit (#6): special building phase with 5-6 players ----
+const six = () => fresh(c => {
+  c.rules.specialBuild = true;
+  while (c.players.length < 6) c.players.push({ ...c.players[1]!, name: 'B' + c.players.length });
+});
+
+t('pha xây đặc biệt: hết lượt thì từng người còn lại được xây, rồi mới tới lượt sau', () => {
+  const s = six();
+  ok(act(s, { type: 'endTurn', pid: 0 }).ok);
+  eq(s.phase, 'specialBuild');
+  eq(s.current, 0, 'vẫn là lượt của người vừa xong');
+  for (const pid of [1, 2, 3, 4, 5]) {
+    eq(G.pendingActors(s), [pid], 'thứ tự theo chiều kim đồng hồ');
+    ok(!act(s, { type: 'passBuild', pid: pid === 5 ? 1 : pid + 1 }).ok, 'chưa tới lượt xây');
+    ok(act(s, { type: 'passBuild', pid }).ok);
+  }
+  eq(s.phase, 'roll');
+  eq(s.current, 1);
+  eq(s.sbp, null);
+});
+
+t('pha xây đặc biệt: được xây và mua thẻ, không giao dịch, không dùng thẻ', () => {
+  const s = six();
+  const v = s.board.vertices.find(x => x.edges.length === 3)!;
+  s.buildings[v.id] = { owner: 2, type: 'settlement' };
+  give(s, 2, { wood: 2, brick: 2, sheep: 2, wheat: 2, ore: 2 });
+  s.players[2]!.dev.push({ type: 'yearOfPlenty', turn: 0 });
+  ok(act(s, { type: 'endTurn', pid: 0 }).ok);
+  ok(act(s, { type: 'passBuild', pid: 1 }).ok);
+  ok(!act(s, { type: 'bankTrade', pid: 2, give: 'wood', get: 'ore' }).ok, 'không đổi ngân hàng');
+  ok(!act(s, { type: 'proposeTrade', pid: 2, give: { wood: 1 }, get: { ore: 1 } }).ok, 'không giao dịch');
+  ok(!act(s, { type: 'playDev', pid: 2, card: 'yearOfPlenty', res: ['ore', 'ore'] }).ok, 'không dùng thẻ');
+  ok(!act(s, { type: 'build', pid: 3, what: 'road', at: v.edges[0]! }).ok, 'người khác chưa tới');
+  ok(act(s, { type: 'build', pid: 2, what: 'road', at: v.edges[0]! }).ok, 'xây đường');
+  ok(act(s, { type: 'buyDev', pid: 2 }).ok, 'mua thẻ');
+  const bought = s.players[2]!.dev[s.players[2]!.dev.length - 1]!;
+  ok(act(s, { type: 'passBuild', pid: 2 }).ok);
+  for (const pid of [3, 4, 5]) ok(act(s, { type: 'passBuild', pid }).ok);
+  // the card bought out of turn is playable on the owner's own next turn
+  eq(s.current, 1);
+  ok(bought.turn < s.turn + 1);
+});
+
+t('pha xây đặc biệt: đủ điểm cũng chưa thắng, phải chờ lượt mình', () => {
+  const s = six();
+  const v = s.board.vertices.find(x => x.edges.length === 3)!;
+  s.buildings[v.id] = { owner: 2, type: 'settlement' };
+  for (let i = 0; i < 9; i++) s.players[2]!.dev.push({ type: 'vp', turn: 0 }); // 1 + 9 = 10
+  give(s, 2, { wheat: 2, ore: 3 });
+  s.players[2]!.dev.pop(); // 9 points
+  ok(act(s, { type: 'endTurn', pid: 0 }).ok);
+  ok(act(s, { type: 'passBuild', pid: 1 }).ok);
+  ok(act(s, { type: 'build', pid: 2, what: 'city', at: v.id }).ok);
+  eq(G.victoryPoints(s, 2), 10);
+  ok(s.phase !== 'gameOver', 'chưa thắng ngoài lượt');
+  ok(act(s, { type: 'passBuild', pid: 2 }).ok);
+  for (const pid of [3, 4, 5]) ok(act(s, { type: 'passBuild', pid }).ok);
+  eq(s.current, 1);
+  // seat 1 plays its turn, then seat 2 wins at the start of its own turn
+  ok(act(s, { type: 'roll', pid: 1 }).ok);
+  while (s.phase !== 'main') {
+    if (s.phase === 'discard') for (const k of Object.keys(s.pendingDiscards)) {
+      const p = s.players[+k]!, need = s.pendingDiscards[k]!, res: Partial<Hand> = {};
+      let left = need;
+      for (const r of ['wood', 'brick', 'sheep', 'wheat', 'ore'] as Res[]) { const x = Math.min(left, p.res[r]); res[r] = x; left -= x; }
+      act(s, { type: 'discard', pid: +k, res });
+    }
+    if (s.phase === 'robber') act(s, { type: 'moveRobber', pid: 1, tile: G.legalRobberTiles(s, 1)[0]!, victim: G.stealTargets(s, 1, G.legalRobberTiles(s, 1)[0]!)[0] ?? null });
+  }
+  ok(act(s, { type: 'endTurn', pid: 1 }).ok);
+  for (const pid of [2, 3, 4, 5, 0]) if ((s.phase as string) === 'specialBuild') ok(act(s, { type: 'passBuild', pid }).ok);
+  eq(s.winner, 2, 'thắng khi tới lượt mình');
+});
+
+t('pha xây đặc biệt: tắt khi dưới 5 người hoặc tắt luật; người rời ván không làm kẹt', () => {
+  const s4 = fresh(c => (c.rules.specialBuild = true));
+  ok(act(s4, { type: 'endTurn', pid: 0 }).ok);
+  eq(s4.phase, 'roll', '4 người: không có pha này');
+  const off = fresh(c => {
+    c.rules.specialBuild = false;
+    while (c.players.length < 6) c.players.push({ ...c.players[1]!, name: 'B' + c.players.length });
+  });
+  ok(act(off, { type: 'endTurn', pid: 0 }).ok);
+  eq(off.phase, 'roll', 'tắt luật');
+  const s = six();
+  ok(act(s, { type: 'endTurn', pid: 0 }).ok);
+  ok(act(s, { type: 'passBuild', pid: 1 }).ok);
+  ok(act(s, { type: 'retirePlayer', pid: 2 }).ok, 'người đang xây rời ván');
+  eq(G.pendingActors(s), [3]);
+  ok(act(s, { type: 'retirePlayer', pid: 5 }).ok, 'người chờ xây rời ván');
+  ok(act(s, { type: 'passBuild', pid: 3 }).ok);
+  ok(act(s, { type: 'passBuild', pid: 4 }).ok);
+  eq(s.phase, 'roll');
+  eq(s.current, 1);
+});
+
+t('bot đi hết pha xây đặc biệt', () => {
+  const s = six();
+  ok(act(s, { type: 'endTurn', pid: 0 }).ok);
+  for (let i = 0; i < 40 && s.phase === 'specialBuild'; i++) {
+    const pid = G.pendingActors(s)[0]!;
+    const a = botAct(s, pid)!;
+    ok(a.type === 'build' || a.type === 'buyDev' || a.type === 'passBuild', a.type);
+    ok(act(s, a).ok);
+  }
+  eq(s.phase, 'roll');
+});

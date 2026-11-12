@@ -324,9 +324,18 @@ export function playableDev(s: GameState, pid: number): DevType[] {
   return [...types];
 }
 
+/** whoever may build right now in the special building phase */
+export function sbpActor(s: GameState): number | null {
+  return s.phase === 'specialBuild' && s.sbp ? s.sbp.queue[s.sbp.idx] ?? null : null;
+}
+
 // Which players must act right now.
 export function pendingActors(s: GameState): number[] {
   if (s.phase === 'gameOver') return [];
+  if (s.phase === 'specialBuild') {
+    const a = sbpActor(s);
+    return a == null ? [] : [a];
+  }
   if (s.phase === 'setup') return [s.setup.queue[s.setup.idx]!.pid];
   if (s.phase === 'discard') return Object.keys(s.pendingDiscards).map(Number).filter(pid => !s.players[pid]!.retired);
   const out = [s.current];
@@ -917,10 +926,11 @@ function assertMain(s: GameState, a: Action) {
 }
 
 H.build = (s, a) => {
-  if (a.pid !== s.current) fail('Chưa tới lượt bạn.');
+  const sb = s.phase === 'specialBuild';
+  if (sb ? a.pid !== sbpActor(s) : a.pid !== s.current) fail('Chưa tới lượt bạn.');
   const p = s.players[a.pid]!;
   const free = s.phase === 'roadBuilding' && a.what === 'road';
-  if (!free) assertMain(s, a);
+  if (!free && !sb) assertMain(s, a);
   if (a.what === 'road') {
     if (p.roadsLeft <= 0) fail('Bạn hết đường rồi.');
     a = fogResolve(s, a, 'edge', e => canBuildRoad(s, a.pid, e), kv => canBuildRoad(kv, a.pid, a.at), 'at');
@@ -968,7 +978,9 @@ H.endRoadBuilding = (s, a) => {
 };
 
 H.buyDev = (s, a) => {
-  assertMain(s, a);
+  if (s.phase === 'specialBuild') {
+    if (a.pid !== sbpActor(s)) fail('Chưa tới lượt bạn.');
+  } else assertMain(s, a);
   const p = s.players[a.pid]!;
   if (!s.devDeck.length) fail('Hết thẻ phát triển rồi.');
   if (!canAfford(p.res, COSTS.dev)) fail('Bạn không đủ tài nguyên.');
@@ -1141,6 +1153,7 @@ function advanceTurn(s: GameState) {
   s.turn++;
   s.devPlayed = false;
   s.freeRoads = 0;
+  s.sbp = null;
   s.phase = 'roll';
   if (wrapped) {
     s.round++;
@@ -1150,9 +1163,39 @@ function advanceTurn(s: GameState) {
   log(s, `🎲 Lượt của @${s.current}.`, s.current);
 }
 
+/** 5-6 player special building phase is on for this game right now */
+function sbpOn(s: GameState): boolean {
+  return s.config.rules.specialBuild === true && s.players.filter(p => !p.retired).length >= 5;
+}
+
 H.endTurn = (s, a) => {
   assertMain(s, a);
-  advanceTurn(s);
+  if (!sbpOn(s)) return advanceTurn(s);
+  // every other seat, clockwise from the next one, may build before the next turn starts
+  const n = s.players.length;
+  const queue: number[] = [];
+  for (let k = 1; k < n; k++) {
+    const pid = (s.current + k) % n;
+    if (!s.players[pid]!.retired) queue.push(pid);
+  }
+  s.trade = null;
+  s.sbp = { queue, idx: 0 };
+  s.phase = 'specialBuild';
+  log(s, '🔨 Pha xây đặc biệt: mọi người lần lượt được xây.');
+};
+
+function nextSpecialBuilder(s: GameState) {
+  const sb = s.sbp!;
+  sb.idx++;
+  if (sb.idx >= sb.queue.length) {
+    s.sbp = null;
+    advanceTurn(s);
+  }
+}
+
+H.passBuild = (s, a) => {
+  if (s.phase !== 'specialBuild' || a.pid !== sbpActor(s)) fail('Chưa tới lượt bạn.');
+  nextSpecialBuilder(s);
 };
 
 // ---- seat management (host only: disconnections, votes) ----
@@ -1232,7 +1275,21 @@ H.retirePlayer = (s, a) => {
     return;
   }
   if (s.phase === 'discard' && !Object.keys(s.pendingDiscards).length) s.phase = s.config.rules.noRobber ? 'main' : 'robber';
+  if (s.phase === 'specialBuild' && s.sbp && s.current !== pid) {
+    const sb = s.sbp;
+    const at = sb.queue.indexOf(pid);
+    if (at >= 0) {
+      sb.queue.splice(at, 1);
+      if (at < sb.idx) sb.idx--;
+      if (sb.idx >= sb.queue.length) {
+        s.sbp = null;
+        advanceTurn(s);
+      }
+    }
+    return;
+  }
   if (s.current === pid && s.phase !== 'gameOver') {
+    s.sbp = null;
     s.pendingDiscards = {};
     advanceTurn(s);
   }

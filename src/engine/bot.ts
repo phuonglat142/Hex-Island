@@ -4,7 +4,7 @@ import { RES, COSTS, pips, isRes, resEntries } from './constants';
 import {
   canAfford, handSize, victoryPoints, tradeRatio, playableDev, pendingActors,
   legalSetupSettlements, legalSetupRoads, legalRoads, legalSettlements, legalCities,
-  legalRobberTiles, stealTargets, zeroRes, viewFor,
+  legalRobberTiles, stealTargets, zeroRes, viewFor, sbpActor,
 } from './game';
 import type { Action, ActionOf, BotLevel, GameState, Hand, Res, Tile, TileKind } from './types';
 
@@ -214,7 +214,7 @@ function tryDevPlay(s: GameState, pid: number): ActionOf<'playDev'> | null {
   return null;
 }
 
-function mainAction(s: GameState, pid: number): Action | null {
+function mainAction(s: GameState, pid: number, buildOnly = false): Action | null {
   const p = s.players[pid]!;
   const L = lvl(s, pid);
   const target = s.config.rules.vpTarget;
@@ -235,7 +235,7 @@ function mainAction(s: GameState, pid: number): Action | null {
     return null; // waiting for answers
   }
 
-  const dev = tryDevPlay(s, pid);
+  const dev = buildOnly ? null : tryDevPlay(s, pid);
   if (dev) return dev;
 
   if (p.citiesLeft > 0 && canAfford(p.res, COSTS.city)) {
@@ -264,7 +264,7 @@ function mainAction(s: GameState, pid: number): Action | null {
   }
 
   // trade toward target
-  if (tgt) {
+  if (tgt && !buildOnly) {
     const { m, n } = missing(p.res, tgt.cost);
     if (n > 0) {
       const sp = surplus(p.res, tgt.cost);
@@ -282,6 +282,13 @@ function mainAction(s: GameState, pid: number): Action | null {
     }
   }
   return { type: 'endTurn', pid };
+}
+
+// special building phase (5-6 players): the same building choices as in the bot's own turn, but
+// no trades, no cards; anything else means passing
+function specialBuild(s: GameState, pid: number): Action {
+  const a = mainAction(s, pid, true);
+  return a && (a.type === 'build' || a.type === 'buyDev') ? a : { type: 'passBuild', pid };
 }
 
 function respond(s: GameState, pid: number): Action {
@@ -378,6 +385,7 @@ export function botAct(real: GameState, pid: number): Action | null {
     const e = setupRoad(s, pid);
     return e === null ? null : { type: 'placeRoad', pid, eid: e };
   }
+  if (s.phase === 'specialBuild') return sbpActor(s) === pid ? specialBuild(s, pid) : null;
   if (s.current !== pid) return null;
   switch (s.phase) {
     case 'roll': {

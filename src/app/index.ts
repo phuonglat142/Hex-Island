@@ -1,7 +1,7 @@
 // Application controller (compatibility facade over the signal store): owns the current game,
 // routes actions (locally, or through the online host), drives bots and persists the game.
 // `App` keeps the exact surface the UI has always used; the data lives in `./store`.
-import { createGame, applyAction, pendingActors } from '@engine/game';
+import { createGame, applyAction, pendingActors, sbpActor } from '@engine/game';
 import { botAct } from '@engine/bot';
 import type { Action, Config, GameState } from '@engine/types';
 import type { Net } from '@net/index';
@@ -217,6 +217,7 @@ export const App: AppApi = {
             console.warn('bot error', a, r.error);
             // fail-safe so a buggy bot can never freeze the table
             if (st.phase === 'main' && st.current === pid) applyAction(st, { type: 'endTurn', pid });
+            else if (st.phase === 'specialBuild' && sbpActor(st) === pid) applyAction(st, { type: 'passBuild', pid });
           }
           App.changed();
         };

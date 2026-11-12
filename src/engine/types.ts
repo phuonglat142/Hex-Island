@@ -139,6 +139,8 @@ export interface Rules {
   maxCities: number;
   randomStart: boolean;
   noRobber: boolean;
+  /** 5-6 player rule: after each turn every other player may build (only with 5+ players in the game) */
+  specialBuild?: boolean;
 }
 
 export interface Modes {
@@ -183,7 +185,7 @@ export interface Rng {
 }
 
 // ---------- game state ----------
-export type Phase = 'setup' | 'roll' | 'main' | 'discard' | 'robber' | 'roadBuilding' | 'gameOver';
+export type Phase = 'setup' | 'roll' | 'main' | 'discard' | 'robber' | 'roadBuilding' | 'specialBuild' | 'gameOver';
 
 export interface Building {
   owner: number;
@@ -304,6 +306,8 @@ export interface GameState {
   robberReturn: Phase;
   /** where Road Building goes back to: 'roll' when it was played before rolling */
   roadReturn?: 'roll' | 'main';
+  /** special building phase: the seats still to build after `current` ended the turn */
+  sbp?: { queue: number[]; idx: number } | null;
   freeRoads: number;
   devPlayed: boolean;
   trade: Trade | null;
@@ -355,6 +359,7 @@ export type Action =
   | { type: 'confirmTrade'; pid: number; with: number; counter?: boolean }
   | { type: 'cancelTrade'; pid: number }
   | { type: 'endTurn'; pid: number }
+  | { type: 'passBuild'; pid: number }
   | { type: 'setController'; pid: number; kind: SeatKind }
   | { type: 'retirePlayer'; pid: number };
 

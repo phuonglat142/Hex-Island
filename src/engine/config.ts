@@ -17,7 +17,7 @@ export function defaultConfig(): Config {
     rules: {
       vpTarget: 10, handLimit: 7, setupRounds: 2, setupCity: false, friendlyRobber: false, robberGrace: 0,
       startBonus: 0, productionMult: 1, devDeck: 'normal', diceMode: 'random',
-      maxRoads: 15, maxSettlements: 5, maxCities: 4, randomStart: true, noRobber: false,
+      maxRoads: 15, maxSettlements: 5, maxCities: 4, randomStart: true, noRobber: false, specialBuild: true,
     },
     modes: { flipped: false, blindfold: false, fog: false, hiddenNumbers: false, events: false, chaosEvery: 0, chaosWhat: 'numbers', privacy: 'auto' },
   };
@@ -35,6 +35,7 @@ export const MODES: Mode[] = [
   { id: 'friendlyRobber', icon: '😇', name: 'Kẻ trộm hiền lành', desc: 'Kẻ trộm không được nhắm vào người có từ 2 điểm trở xuống.', get: c => c.rules.friendlyRobber, set: (c, v) => (c.rules.friendlyRobber = v) },
   { id: 'noRobber', icon: '🚫', name: 'Không có kẻ trộm', desc: 'Ra 7 thì chỉ phải bỏ thẻ. Không ai bị cướp.', get: c => c.rules.noRobber, set: (c, v) => (c.rules.noRobber = v) },
   { id: 'setupCity', icon: '🏰', name: 'Khởi đầu bằng thành phố', desc: 'Lần đặt thứ hai đầu ván là thành phố luôn.', get: c => c.rules.setupCity, set: (c, v) => (c.rules.setupCity = v) },
+  { id: 'specialBuild', icon: '🔨', name: 'Pha xây đặc biệt (5-6 người)', desc: 'Khi có từ 5 người: hết mỗi lượt, những người còn lại lần lượt được xây và mua thẻ (không giao dịch, không dùng thẻ).', get: c => c.rules.specialBuild === true, set: (c, v) => (c.rules.specialBuild = v) },
   { id: 'doubleProd', icon: '⚡', name: 'Tăng tốc', desc: 'Sản lượng luôn gấp đôi. Ván nào cũng bùng nổ.', get: c => c.rules.productionMult > 1, set: (c, v) => (c.rules.productionMult = v ? 2 : 1) },
 ];
 
