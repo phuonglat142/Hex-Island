@@ -29,7 +29,7 @@ import { updateFog } from './fog';
 import { buildTokens, tokenKey } from './labels';
 import type { LabelSet } from './labelsprites';
 import { placeGrass } from './grass';
-import { buildDynamic, type PieceSet, type Spawn } from './pieces';
+import { buildDynamic, pieceWarmup, type PieceSet, type Spawn } from './pieces';
 import { buildPorts } from './ports';
 import { placeProps } from './props';
 import { detailKey, dioramaParams, PARAMS, spriteLabels, type Tier, type TierParams } from './quality';
@@ -926,11 +926,36 @@ export class Board3D implements BoardRenderer {
   private compiling = false;
   private async compile() {
     this.compiling = true; // no frames while the shaders build: the loader covers the canvas
+    // the pieces are compiled too, though none is on the board yet (see pieceWarmup); never on the menu diorama
+    const warm = this.diorama ? null : pieceWarmup(this, [this.depthOnly, this.visMat, this.allMat, ...(this.overlay ? [this.overlay.mat] : [])]);
     try {
+      const jobs = [this.renderer.compileAsync(this.scene, this.camera)];
+      if (warm) jobs.push(this.renderer.compileAsync(warm, this.camera, this.scene));
       // a timeout so a stuck compile can never keep the loader up
-      await Promise.race([this.renderer.compileAsync(this.scene, this.camera), new Promise(res => setTimeout(res, 6000))]);
+      await Promise.race([Promise.all(jobs), new Promise(res => setTimeout(res, 6000))]);
     } catch (e) {
       console.warn('compileAsync failed', e);
+    }
+    if (warm && this.alive) {
+      // one real frame still under the loader, with the pieces shrunk to nothing: the shadow pass builds its depth
+      // programs (compileAsync never makes those) and every program gets its first use here, not mid-game
+      const masks = new Set<THREE.Material>([this.depthOnly, this.visMat, this.allMat]);
+      if (this.overlay) masks.add(this.overlay.mat);
+      warm.scale.setScalar(1e-5);
+      warm.traverse(o => {
+        o.frustumCulled = false;
+        if (masks.has((o as THREE.Mesh).material as THREE.Material)) o.visible = false; // full-screen / colour-mask shaders: compiled above
+      });
+      this.scene.add(warm);
+      this.renderer.shadowMap.needsUpdate = true;
+      try {
+        this.drawFrame();
+      } catch (e) {
+        console.warn('warm-up frame failed', e);
+      }
+      this.scene.remove(warm);
+      // everything in it is shared (kit geometry, cached materials, the board's own mask materials): free only the instance buffers
+      warm.traverse(o => (o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).dispose());
     }
     this.compiling = false;
     this.shadowDirty = this.masksStale = this.labelsDirty = true;

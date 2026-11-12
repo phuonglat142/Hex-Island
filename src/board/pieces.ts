@@ -452,3 +452,40 @@ export class PieceSet {
 export function buildDynamic(board: Board3D, st: BState, view: BoardViewState) {
   (board.pieceSet || (board.pieceSet = new PieceSet(board))).sync(st, view);
 }
+
+
+export function pieceWarmup(board: Board3D, maskMats: THREE.Material[]): THREE.Group {
+  const kit = board.kit, color = '#808080', g = new THREE.Group();
+  const colors = { Player: color, Banner: color, PlayerWood: color };
+  const ghost = (o: THREE.Object3D) => {
+    o.traverse(obj => {
+      const m = obj as THREE.Mesh;
+      if (m.isMesh) m.material = ghostMat(m.material as THREE.Material);
+    });
+    return o;
+  };
+  const city = tinted(kit.city, colors);
+  city.add(banner('', 0, 0, 0.78));
+  g.add(tinted(kit.house, colors), city, ghost(tinted(kit.house, colors)), ghost(tinted(kit.road, colors)), kit.robber.clone());
+  const inst = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
+    const m = new THREE.InstancedMesh(geo, mat, 1);
+    m.castShadow = m.receiveShadow = true;
+    g.add(m);
+  };
+  for (const p of roadPartsOf(kit, color)) inst(p.geo, p.mat);
+  const jmats = jointMats(board, color);
+  inst(JOINT_CYL, jmats.bed);
+  inst(JOINT_BOX, jmats.top);
+  for (const mt of maskMats) {
+    g.add(new THREE.Mesh(JOINT_BOX, mt));
+    inst(JOINT_BOX, mt);
+  }
+  g.traverse(o => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.layers.set(LAYER_PIECES);
+    m.userData.pc = new THREE.Color(color);
+    m.onBeforeRender = pieceHook;
+  });
+  return g;
+}
