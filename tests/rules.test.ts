@@ -434,3 +434,65 @@ t('bot chọn độc quyền không cần nhìn bài ẩn của đối thủ', (
   eq(da, db, 'cùng quyết định');
   ok(da && da.type === 'playDev' && da.card === 'monopoly' && da.res === 'ore', 'gom đá');
 });
+
+// ---- rules audit (#5): counter-offers ----
+t('mặc cả: mời, phản đề nghị, chốt theo điều kiện mới', () => {
+  const s = fresh();
+  give(s, 0, { wood: 3 });
+  give(s, 1, { ore: 2 });
+  ok(act(s, { type: 'proposeTrade', pid: 0, give: { wood: 1 }, get: { ore: 1 }, to: [1, 2] }).ok);
+  const id = s.trade!.id;
+  // B wants 2 wood for its ore
+  ok(act(s, { type: 'counterTrade', pid: 1, give: { ore: 1 }, get: { wood: 2 }, tradeId: id }).ok);
+  eq(s.trade!.responses[1], 'counter');
+  eq(s.trade!.counters![1], { give: { wood: 2, brick: 0, sheep: 0, wheat: 0, ore: 0 }, get: { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 1 } });
+  ok(!act(s, { type: 'counterTrade', pid: 1, give: { ore: 2 }, get: { wood: 2 }, tradeId: id }).ok, 'một lần mặc cả mỗi lời mời');
+  ok(!act(s, { type: 'confirmTrade', pid: 0, with: 1 }).ok, 'chốt lời mời gốc với người đã mặc cả');
+  ok(act(s, { type: 'confirmTrade', pid: 0, with: 1, counter: true }).ok);
+  eq(s.players[0]!.res.wood, 1);
+  eq(s.players[0]!.res.ore, 1);
+  eq(s.players[1]!.res.wood, 2);
+  eq(s.players[1]!.res.ore, 1);
+  eq(s.trade, null);
+});
+
+t('mặc cả: chỉ người được mời, phải có thứ mình đưa, lời mời rút thì mất', () => {
+  const s = fresh();
+  give(s, 0, { wood: 3 });
+  give(s, 1, { ore: 1 });
+  give(s, 3, { ore: 1 });
+  ok(act(s, { type: 'proposeTrade', pid: 0, give: { wood: 1 }, get: { ore: 1 }, to: [1, 2] }).ok);
+  ok(!act(s, { type: 'counterTrade', pid: 3, give: { ore: 1 }, get: { wood: 2 } }).ok, 'không được mời');
+  ok(!act(s, { type: 'counterTrade', pid: 2, give: { ore: 1 }, get: { wood: 2 } }).ok, 'không có đá');
+  ok(!act(s, { type: 'counterTrade', pid: 1, give: { ore: 1 }, get: { ore: 1 } }).ok, 'cùng một loại');
+  ok(!act(s, { type: 'counterTrade', pid: 1, give: { ore: 0.5 }, get: { wood: 1 } }).ok, 'thẻ lẻ');
+  ok(act(s, { type: 'counterTrade', pid: 1, give: { ore: 1 }, get: { wood: 3 } }).ok);
+  ok(!act(s, { type: 'counterTrade', pid: 1, give: { ore: 1 }, get: { wood: 2 }, tradeId: 999 }).ok, 'lời mời cũ');
+  ok(act(s, { type: 'cancelTrade', pid: 0 }).ok);
+  eq(s.trade, null);
+  ok(!act(s, { type: 'confirmTrade', pid: 0, with: 1, counter: true }).ok, 'đã rút');
+});
+
+t('bot mặc cả và bot chốt lời mặc cả hợp lý', () => {
+  // seat 1 (bot) needs ore for a city, the offer asks it for the wrong card: it should counter or answer
+  let counters = 0, closed = 0;
+  for (let seed = 1; seed <= 60; seed++) {
+    const s = fresh(c => { c.seed = seed; c.players.forEach(p => (p.level = 'normal')); });
+    give(s, 0, { wood: 2, brick: 2, sheep: 2 });
+    give(s, 1, { wheat: 2, ore: 2, sheep: 3 });
+    s.buildings[s.board.vertices.find(v => v.edges.length === 3)!.id] = { owner: 1, type: 'settlement' }; // saving for a city
+    ok(act(s, { type: 'proposeTrade', pid: 0, give: { wood: 1 }, get: { wheat: 1 }, to: [1] }).ok);
+    const a = botAct(s, 1)!;
+    ok(a.type === 'respondTrade' || a.type === 'counterTrade', 'bot trả lời');
+    ok(act(s, a).ok, 'nước đi hợp lệ');
+    if (a.type === 'counterTrade') {
+      counters++;
+      const b = botAct(s, 0)!; // proposer bot now decides
+      ok(b.type === 'confirmTrade' || b.type === 'cancelTrade');
+      ok(act(s, b).ok);
+      if (b.type === 'confirmTrade') closed++;
+    }
+  }
+  ok(counters > 0, 'có mặc cả');
+  void closed;
+});

@@ -255,7 +255,7 @@ export interface GameEvent {
   pid?: number;
 }
 
-type TradeResponse = 'accept' | 'reject' | null;
+type TradeResponse = 'accept' | 'reject' | 'counter' | null;
 
 export interface Trade {
   id: number;
@@ -264,6 +264,8 @@ export interface Trade {
   get: Hand;
   to: number[];
   responses: Record<string, TradeResponse>;
+  /** counter-offers by seat, written from the proposer's side (`give` = what the proposer pays) */
+  counters?: Record<string, { give: Hand; get: Hand }>;
 }
 
 export interface LogEntry {
@@ -349,7 +351,8 @@ export type Action =
   | { type: 'bankTrade'; pid: number; give: Res; get: Res }
   | { type: 'proposeTrade'; pid: number; give: Partial<Hand>; get: Partial<Hand>; to?: number[] }
   | { type: 'respondTrade'; pid: number; accept: boolean; tradeId?: number | null }
-  | { type: 'confirmTrade'; pid: number; with: number }
+  | { type: 'counterTrade'; pid: number; give: Partial<Hand>; get: Partial<Hand>; tradeId?: number | null }
+  | { type: 'confirmTrade'; pid: number; with: number; counter?: boolean }
   | { type: 'cancelTrade'; pid: number }
   | { type: 'endTurn'; pid: number }
   | { type: 'setController'; pid: number; kind: SeatKind }

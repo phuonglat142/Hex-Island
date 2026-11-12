@@ -60,7 +60,8 @@ type ModalSpec =
   | { kind: 'gameOver' }
   | { kind: 'victims'; tile: number; v: number; victims: number[] }
   | { kind: 'monopoly'; v: number }
-  | { kind: 'yop'; v: number };
+  | { kind: 'yop'; v: number }
+  | { kind: 'counter'; v: number; tradeId: number };
 
 export const modal = signal<ModalSpec | null>(null);
 /** the build button armed on the toolbar (road / settlement / city), picked on the board next */
@@ -236,7 +237,11 @@ interface OfferInfo {
   iAmProposer: boolean;
   online: boolean;
   /** one row per invited seat */
-  rows: { pid: number; name: string; r: 'accept' | 'reject' | null; mine: boolean; can: boolean }[];
+  rows: {
+    pid: number; name: string; r: 'accept' | 'reject' | 'counter' | null; mine: boolean; can: boolean;
+    /** counter-offer as the other seat sees it: what it gives / wants, and whether the proposer can pay it */
+    counter: { give: Hand; get: Hand; ok: boolean } | null;
+  }[];
 }
 
 export const offer = select<OfferInfo | null>(() => {
@@ -254,7 +259,9 @@ export const offer = select<OfferInfo | null>(() => {
     id: tr.id, from: tr.from, fromName: from.name, fromColor: from.color, give: tr.give, get: tr.get, iAmProposer, online: App.isOnline(),
     rows: tr.to.map(pid => {
       const o = st.players[pid]!;
-      return { pid, name: o.name, r: tr.responses[pid] ?? null, mine: mine.includes(pid), can: G.canAfford(o.res, tr.get) };
+      const c = tr.counters && tr.counters[pid];
+      const counter = c ? { give: c.get, get: c.give, ok: G.canAfford(from.res, c.give) } : null;
+      return { pid, name: o.name, r: tr.responses[pid] ?? null, mine: mine.includes(pid), can: G.canAfford(o.res, tr.get), counter };
     }),
   };
 }, jsonEq);

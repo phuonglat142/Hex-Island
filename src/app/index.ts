@@ -208,7 +208,7 @@ export const App: AppApi = {
       for (const pid of bots) {
         const a = botAct(st, pid);
         if (!a) continue;
-        const quick = a.type === 'respondTrade' || a.type === 'discard' || a.type === 'placeRoad';
+        const quick = a.type === 'respondTrade' || a.type === 'counterTrade' || a.type === 'discard' || a.type === 'placeRoad';
         const total = drama + (quick ? speed * 0.6 : a.type === 'endTurn' ? speed * 0.8 : speed);
         const apply = () => {
           if (App.state !== st) return;

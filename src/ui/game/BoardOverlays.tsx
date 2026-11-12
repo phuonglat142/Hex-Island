@@ -4,7 +4,7 @@ import { useMemo } from 'preact/hooks';
 import { App } from '@app/index';
 import { Jit } from '@ui/components/Jit';
 import { px } from '@ui/components/PixelIcon';
-import { banner, cur, countRender, jsonEq, offer, select } from './signals';
+import { banner, cur, countRender, jsonEq, modal, offer, select } from './signals';
 import { resLine } from './actions';
 
 /** "what to do now" line (jit letters) */
@@ -56,6 +56,7 @@ export function Offer(): JSX.Element {
                 <span class="tag">{row.name}:</span>,
                 <button type="button" class="btn sm green" disabled={!row.can} title={row.can ? '' : 'Bạn không có thứ họ cần'} onClick={() => respond(row.pid, true, o.id)}>✓ Đồng ý</button>,
                 <button type="button" class="btn sm" onClick={() => respond(row.pid, false, o.id)}>✗ Không</button>,
+                <button type="button" class="btn sm" title="Đề nghị điều kiện khác" onClick={() => (modal.value = { kind: 'counter', v: row.pid, tradeId: o.id })}>🔁 Mặc cả</button>,
               ];
             if (row.r == null && row.mine && o.iAmProposer && !o.online)
               // hotseat: another human at the table answers from here
@@ -63,6 +64,15 @@ export function Offer(): JSX.Element {
                 <span class="tag">{row.name}:</span>,
                 <button type="button" class="btn sm green" disabled={!row.can} onClick={() => respond(row.pid, true, o.id)}>✓</button>,
                 <button type="button" class="btn sm" onClick={() => respond(row.pid, false, o.id)}>✗</button>,
+              ];
+            if (row.r === 'counter' && row.counter)
+              return [
+                <span class="tag counter">
+                  {`${row.name} 🔁 `}đưa <span class="res-inline">{px(resLine(row.counter.give), 16)}</span> lấy <span class="res-inline">{px(resLine(row.counter.get), 16)}</span>
+                </span>,
+                o.iAmProposer ? (
+                  <button type="button" class="btn sm primary" disabled={!row.counter.ok} title={row.counter.ok ? '' : 'Bạn không đủ thứ họ đòi'} onClick={() => void App.dispatch({ type: 'confirmTrade', pid: o.from, with: row.pid, counter: true })}>Chốt với {row.name}</button>
+                ) : null,
               ];
             return [
               <span class={'tag' + (row.r === 'accept' ? ' ok' : row.r === 'reject' ? ' no' : '')}>{`${row.name} ${row.r === 'accept' ? '✓' : row.r === 'reject' ? '✗' : '…'}`}</span>,

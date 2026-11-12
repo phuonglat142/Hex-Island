@@ -1076,21 +1076,45 @@ H.respondTrade = (s, a) => {
   t.responses[a.pid] = a.accept ? 'accept' : 'reject';
 };
 
+// A seat that was offered the trade answers with its own terms (`give` = what IT pays). One
+// counter per seat per offer; only the proposer (the current player) can close it.
+H.counterTrade = (s, a) => {
+  const t = s.trade;
+  if (!t || !t.to.includes(a.pid)) fail('Không có lời mời nào cho bạn.');
+  if (a.tradeId != null && a.tradeId !== t.id) fail('Lời mời đó không còn nữa.');
+  if (t.responses[a.pid] === 'counter') fail('Bạn đã mặc cả lời mời này rồi.');
+  if (!validOffer(a.give) || !validOffer(a.get)) fail('Lời mời không hợp lệ.');
+  if (!handSize(a.give) || !handSize(a.get)) fail('Lời mời phải có cả thứ đưa và thứ nhận.');
+  if (RES.some(r => (a.give[r] || 0) && (a.get[r] || 0))) fail('Không thể đưa và đòi cùng một loại tài nguyên.');
+  if (!canAfford(s.players[a.pid]!.res, a.give)) fail('Bạn không có thứ mình định đưa.');
+  const give = zeroRes(), get = zeroRes();
+  for (const r of RES) {
+    give[r] = a.get[r] || 0; // what the proposer pays = what the counter asks for
+    get[r] = a.give[r] || 0;
+  }
+  (t.counters ||= {})[a.pid] = { give, get };
+  t.responses[a.pid] = 'counter';
+  log(s, `🔁 @${a.pid} mặc cả với @${t.from}.`, a.pid);
+};
+
 H.confirmTrade = (s, a) => {
   const t = s.trade;
   if (!t || t.from !== a.pid) fail('Bạn chưa đưa ra lời mời nào.');
-  if (t.responses[a.with] !== 'accept') fail('Người đó chưa đồng ý.');
+  const c = a.counter ? t.counters && t.counters[a.with] : null;
+  if (a.counter ? t.responses[a.with] !== 'counter' || !c : t.responses[a.with] !== 'accept') fail('Người đó chưa đồng ý.');
+  const terms = c || { give: t.give, get: t.get };
   const p = s.players[a.pid]!, o = s.players[a.with]!;
-  if (!canAfford(p.res, t.give) || !canAfford(o.res, t.get)) {
+  if (!canAfford(p.res, terms.give) || !canAfford(o.res, terms.get)) {
+    if (a.counter) fail('Có người không còn đủ tài nguyên cho lời mặc cả này.'); // the other answers still stand
     s.trade = null;
     fail('Có người không còn đủ tài nguyên nữa.');
   }
   for (const r of RES) {
-    p.res[r] += t.get[r] - t.give[r];
-    o.res[r] += t.give[r] - t.get[r];
+    p.res[r] += terms.get[r] - terms.give[r];
+    o.res[r] += terms.give[r] - terms.get[r];
   }
   s.trade = null;
-  s.fx.push({ kind: 'trade', a: a.pid, b: a.with, give: t.give, get: t.get });
+  s.fx.push({ kind: 'trade', a: a.pid, b: a.with, give: terms.give, get: terms.get });
   log(s, `🤝 @${a.pid} và @${a.with} trao đổi với nhau.`, a.pid);
 };
 
@@ -1168,6 +1192,7 @@ H.retirePlayer = (s, a) => {
     else if (s.trade.to.includes(pid)) {
       s.trade.to = s.trade.to.filter(x => x !== pid);
       delete s.trade.responses[pid];
+      if (s.trade.counters) delete s.trade.counters[pid];
       if (!s.trade.to.length) s.trade = null;
     }
   }
@@ -1214,7 +1239,7 @@ H.retirePlayer = (s, a) => {
 };
 
 // actions that leave the trade on the table when the current player makes them
-const TRADE_ACTIONS = new Set(['proposeTrade', 'respondTrade', 'confirmTrade', 'cancelTrade']);
+const TRADE_ACTIONS = new Set(['proposeTrade', 'respondTrade', 'counterTrade', 'confirmTrade', 'cancelTrade']);
 
 export function applyAction(s: GameState, a: Action): ApplyResult {
   s.fx = [];
