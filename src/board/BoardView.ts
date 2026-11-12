@@ -315,6 +315,11 @@ export class BoardView implements BoardRenderer {
     this.prevPieces = pieces;
   }
 
+  /** drawn over the 3D canvas while the island builds underneath (see BoardHost) */
+  placeholder(on: boolean) {
+    this.svg.classList.toggle('board-placeholder', on);
+  }
+
   dispose() {
     this.svg.remove();
   }

@@ -24,7 +24,7 @@ function resetSignals(): void {
   diceAnim.value = 0;
   topView.value = false;
   boardSig.value = null;
-  boards.any = boards.d3 = null;
+  boards.any = boards.d3 = boards.warming = null;
 }
 
 /** one `board.render` for the current state (called from the controller effect) */
@@ -41,7 +41,7 @@ function paintBoard(): void {
   const vst = lock ? { ...g, buildings: {}, roads: {}, vision: { circles: [], caps: [] } } : g;
   const flipAt = S.flipPending ? S.flipAt : 0;
   S.flipPending = false;
-  untracked(() => b.render(vst, {
+  const view = {
     vision: st.config.modes.fog && v >= 0 ? vst.vision || { circles: [], caps: [] } : null,
     faceDown: st.config.modes.flipped,
     flipAt,
@@ -50,7 +50,11 @@ function paintBoard(): void {
     rolledAt: S.rolledAt,
     pulseTiles: S.pulseTiles,
     blindOwn,
-  }));
+  };
+  untracked(() => {
+    b.render(vst, view);
+    if (boards.warming && boards.warming !== b) boards.warming.render(vst, view);
+  });
 }
 
 export function startController(): () => void {

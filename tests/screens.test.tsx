@@ -7,7 +7,7 @@ import { act } from 'preact/test-utils';
 
 vi.mock('@ui/pixel', () => ({ pxURL: (n: string) => `sprite:${n}`, pxIcon: () => document.createElement('img'), pixelize: () => {}, ICON_SETS: ['render', 'pico', 'classic'], setIconSet: () => {}, iconSet: () => 'render' }));
 vi.mock('@ui/screens/Diorama', () => ({ Diorama: () => <div class="menu-bg3d" /> }));
-vi.mock('@board/BoardView', () => ({ BoardView: class { zoom = 1; render() {} dispose() {} resetView() {} setZoom() {} } }));
+vi.mock('@board/BoardView', () => ({ BoardView: class { zoom = 1; render() {} dispose() {} resetView() {} setZoom() {} placeholder() {} } }));
 // no WebGL in happy-dom: the game screen falls back to the flat board, as it does on a machine without GPU
 vi.mock('@board/Board3D', () => ({ Board3D: { create: () => Promise.reject(new Error('no webgl')), preload: () => Promise.resolve() } }));
 vi.mock('@ui/sfx', () => ({ sfx: { on: false }, play: new Proxy({}, { get: () => () => {} }) }));

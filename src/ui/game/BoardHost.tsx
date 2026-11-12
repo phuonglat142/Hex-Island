@@ -11,7 +11,7 @@ import { px } from '@ui/components/PixelIcon';
 import { toast } from '@ui/dom';
 import { Banner, Offer, RollLog } from './BoardOverlays';
 import { boardPing } from './fx';
-import { boards, boardSig, countRender, pick, topView } from './signals';
+import { boardNudge, boards, boardSig, countRender, pick, topView } from './signals';
 
 export function BoardHost(): JSX.Element {
   countRender('BoardHost');
@@ -29,38 +29,59 @@ export function BoardHost(): JSX.Element {
       App.botsHeld = false;
       App.scheduleBots();
     };
+    // the flat map is up at once (no blank board while three.js, the island and the shaders get ready), drawn
+    // over the 3D canvas, which builds underneath (`boards.warming` gets the same renders) and takes over when ready
+    const flat = new BoardView(el);
+    flat.placeholder(true);
+    el.classList.add('b3d-warming');
+    board = flat;
+    boards.any = flat;
+    boardSig.value = flat;
     (async () => {
       try {
         const { Board3D } = await import('@board/Board3D');
         if (dead) return;
         const b = await Board3D.create(el);
         if (dead) return b.dispose();
+        boards.warming = b;
+        boardNudge.value++; // paint once more so the 3D board gets the current state (and starts its build)
+        await b.ready;
+        boards.warming = null;
+        if (dead) return b.dispose();
+        // swap only once the island has been drawn (two frames: the first one may still be in flight)
+        await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+        if (dead) return b.dispose();
         board = b;
         boards.d3 = b;
+        boards.any = b;
         b.onSlow = () => toast('Máy hơi chậm: thử chọn mức "Máy yếu" trong ☰ Menu → Đồ họa 3D', 'info', 7000);
         b.onPing = boardPing;
+        boardSig.value = b;
+        flat.dispose();
+        el.classList.remove('b3d-warming');
       } catch (e) {
         console.error(e);
+        boards.warming = null;
         if (dead) return;
+        // the flat map simply stays
         toast('Không tải được bản đồ 3D (mất mạng hoặc thiếu WebGL?): chuyển sang bản đồ phẳng', 'error', 4000);
-        board = new BoardView(el);
+        flat.placeholder(false);
+        el.classList.remove('b3d-warming');
+        for (const c of [...el.querySelectorAll('canvas.board-3d, .labels-3d, .vignette-css')]) c.remove();
       }
-      boards.any = board;
-      boardSig.value = board; // the controller effect draws the island; shaders compile (compileAsync) while the loader is up
-      if (boards.d3 && boards.d3.ready) await boards.d3.ready;
       if (dead) return;
       setLoading(false);
       release();
-    })().catch(e => {
-      console.error(e);
-      if (!dead) release(); // never keep the bots waiting on a board that failed
-    });
+    })();
     return () => {
       dead = true;
       App.botsHeld = false;
       boardSig.value = null;
-      boards.any = boards.d3 = null;
+      const w = boards.warming;
+      boards.any = boards.d3 = boards.warming = null;
       if (board) board.dispose();
+      if (board !== flat) flat.dispose();
+      if (w && w !== board) w.dispose();
     };
   }, []);
 
@@ -90,7 +111,7 @@ export function BoardHost(): JSX.Element {
         <button type="button" class="btn" title="Thu nhỏ" onClick={() => zoom(1 / 1.25)}>−</button>
         <button type="button" class="btn" title="Căn giữa" onClick={() => boards.any?.resetView()}>⤢</button>
       </div>
-      {loading && <Jit class="board-loading" text="🏝️ Đang dựng đảo..." size={22} />}
+      {loading && <Jit class="board-loading mini" text="🏝️ Đang dựng đảo 3D..." size={14} />}
     </section>
   );
 }

@@ -188,6 +188,10 @@ input[type=range] { accent-color: var(--sand); }
 @keyframes hotGlow { 50% { opacity: 1; } }
 .board-wrap { background: var(--ink); }
 .board-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--sand); font-family: var(--display); font-size: 20px; text-shadow: 3px 3px 0 var(--wine); pointer-events: none; }
+/* while the 3D island builds: the flat map covers the canvas (its labels and hotspots stay hidden), a small note in a corner */
+.board-loading.mini { inset: auto; left: 12px; bottom: 12px; display: block; white-space: nowrap; font-size: 14px; z-index: 6; }
+.board-wrap .board-svg.board-placeholder { position: absolute; inset: 0; z-index: 2; background: var(--ink); }
+.board-wrap.b3d-warming .labels-3d, .board-wrap.b3d-warming .vignette-css { visibility: hidden; }
 .gfx-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 /* numbers: Baloo 2, bold and round so 3 vs 8 never blur together */
