@@ -192,8 +192,11 @@ function tryDevPlay(s: GameState, pid: number): ActionOf<'playDev'> | null {
   }
   if (s.phase !== 'main') return null;
   if (playable.includes('monopoly')) {
-    const r = best(RES, r => s.players.reduce((a, o) => a + (o.id === pid ? 0 : o.res[r]), 0))!;
-    const tot = s.players.reduce((a, o) => a + (o.id === pid ? 0 : o.res[r]), 0);
+    // no peeking at hidden hands: what is missing from the (public) bank and not in my own hand
+    // is in the others' hands. That is exactly what a human can count from the table.
+    const others = (r: Res) => Math.max(0, s.bankTotal - s.bank[r] - p.res[r]);
+    const r = best(RES, others)!;
+    const tot = others(r);
     if (tot >= 3) return { type: 'playDev', pid, card: 'monopoly', res: r };
   }
   if (playable.includes('yearOfPlenty')) {

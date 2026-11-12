@@ -1,6 +1,7 @@
 // Targeted rule tests. Usage: pnpm test
 import * as G from '@engine/game';
 import { defaultConfig } from '@engine/config';
+import { botAct } from '@engine/bot';
 
 import { test } from 'vitest';
 import type { Action, Config, GameState, Hand, Res } from '@engine/types';
@@ -414,4 +415,22 @@ t('bỏ thẻ phải là số nguyên không âm', () => {
   ok(!act(s, { type: 'discard', pid: 1, res: { wood: 5, brick: -1 } }).ok, 'thẻ âm');
   eq(s.players[1]!.res, { wood: 4, brick: 4, sheep: 0, wheat: 0, ore: 0 }, 'không đổi khi bị từ chối');
   ok(act(s, { type: 'discard', pid: 1, res: { wood: 2, brick: 2 } }).ok);
+});
+
+// ---- rules audit (#3): bots only use public information ----
+t('bot chọn độc quyền không cần nhìn bài ẩn của đối thủ', () => {
+  const make = (h1: Partial<Hand>, h2: Partial<Hand>) => {
+    const s = fresh(c => c.players.forEach(p => (p.level = 'hard')));
+    s.turn = 3;
+    s.players[0]!.dev.push({ type: 'monopoly', turn: 1 });
+    give(s, 1, h1);
+    give(s, 2, h2);
+    return s;
+  };
+  // same bank and hand sizes, the ore/wheat sit with different opponents
+  const a = make({ ore: 4, wheat: 1 }, { wheat: 1, sheep: 1 });
+  const b = make({ wheat: 2, sheep: 1 }, { ore: 4 });
+  const da = botAct(a, 0), db = botAct(b, 0);
+  eq(da, db, 'cùng quyết định');
+  ok(da && da.type === 'playDev' && da.card === 'monopoly' && da.res === 'ore', 'gom đá');
 });
