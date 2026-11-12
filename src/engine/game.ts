@@ -863,11 +863,14 @@ H.roll = (s, a) => {
   else s.phase = R.noRobber ? 'main' : 'robber';
 };
 
+const validOffer = (o: Partial<Hand> | null | undefined): boolean => !!o && RES.every(r => Number.isInteger(o[r] || 0) && (o[r] || 0) >= 0);
+
 H.discard = (s, a) => {
   if (s.phase !== 'discard') fail('Không ai phải bỏ thẻ.');
   const need = s.pendingDiscards[a.pid];
   if (!need) fail('Bạn không phải bỏ thẻ.');
   const res = a.res || {};
+  if (!validOffer(res)) fail('Số thẻ bỏ không hợp lệ.'); // whole, non-negative cards only
   const total = RES.reduce((t, r) => t + (res[r] || 0), 0);
   if (total !== need) fail(`Bạn phải bỏ đúng ${need} thẻ.`);
   const p = s.players[a.pid]!;
@@ -1043,8 +1046,6 @@ H.bankTrade = (s, a) => {
   s.fx.push({ kind: 'bankTrade', pid: a.pid, give: a.give, n: ratio, get: a.get });
   log(s, `🏦 @${a.pid} đổi ${ratio}${resName(a.give)} lấy 1${resName(a.get)}.`, a.pid);
 };
-
-const validOffer = (o: Partial<Hand> | null | undefined): boolean => !!o && RES.every(r => Number.isInteger(o[r] || 0) && (o[r] || 0) >= 0);
 
 H.proposeTrade = (s, a) => {
   assertMain(s, a);

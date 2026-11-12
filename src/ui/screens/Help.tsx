@@ -24,7 +24,7 @@ export function HelpModal({ onClose }: { onClose: () => void }): JSX.Element {
         <L>🎲 Tung xúc xắc: mỗi ô mang số đó cho tài nguyên tới các nhà (1) và thành phố (2) nằm sát nó.</L>
         <L>🏗️ Giá xây: đường 🌲🧱 · nhà 🌲🧱🐑🌾 · thành phố 🌾🌾⛰️⛰️⛰️ · thẻ 🐑🌾⛰️.</L>
         <L>🤝 Giao dịch với ngân hàng (4:1, hoặc lời hơn nhờ cảng 3:1 và 2:1) hoặc với người chơi khác.</L>
-        <L>🃏 Mỗi lượt dùng được một thẻ phát triển (không phải thẻ vừa mua trong lượt). Hiệp sĩ có thể dùng trước khi tung xúc xắc.</L>
+        <L>🃏 Mỗi lượt dùng được một thẻ phát triển (không phải thẻ vừa mua trong lượt). Có thể dùng cả trước khi tung xúc xắc.</L>
       </ul>
       <h3>Số 7 và kẻ trộm</h3>
       <ul>

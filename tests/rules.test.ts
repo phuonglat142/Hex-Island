@@ -403,3 +403,15 @@ t('xây đường trước khi tung: xong 2 đoạn thì quay về phase tung', 
   ok(act(s3, { type: 'endRoadBuilding', pid: 0 }).ok);
   eq(s3.phase, 'main');
 });
+
+// ---- rules audit (#4): discards are whole cards ----
+t('bỏ thẻ phải là số nguyên không âm', () => {
+  const s = fresh();
+  give(s, 1, { wood: 4, brick: 4 });
+  s.phase = 'discard';
+  s.pendingDiscards = { 1: 4 };
+  ok(!act(s, { type: 'discard', pid: 1, res: { wood: 0.5, brick: 3.5 } }).ok, 'thẻ lẻ');
+  ok(!act(s, { type: 'discard', pid: 1, res: { wood: 5, brick: -1 } }).ok, 'thẻ âm');
+  eq(s.players[1]!.res, { wood: 4, brick: 4, sheep: 0, wheat: 0, ore: 0 }, 'không đổi khi bị từ chối');
+  ok(act(s, { type: 'discard', pid: 1, res: { wood: 2, brick: 2 } }).ok);
+});
