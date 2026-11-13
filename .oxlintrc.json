@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "env": {
+    "builtin": true
+  },
+  "ignorePatterns": ["**/dist/**", "**/public/**", "**/generated/**", "**/*.umd.js"],
+  "rules": {
+    "typescript/no-unused-vars": "off",
+    "typescript/ban-types": "off",
+    "typescript/no-explicit-any": "off",
+    "eslint/no-param-reassign": "error",
+    "typescript/prefer-as-const": "error",
+    "typescript/default-param-last": "error",
+    "typescript/prefer-enum-initializers": "error",
+    "eslint/one-var": ["error", "never"],
+    "eslint/no-useless-concat": "error",
+    "unicorn/prefer-number-properties": "error",
+    "typescript/no-inferrable-types": "error",
+    "eslint/no-else-return": "error"
+  }
+}
