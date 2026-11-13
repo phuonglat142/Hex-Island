@@ -1,9 +1,9 @@
 // Headless self-play: runs many bot-only games over every map/mode combination and
 // checks rule invariants after every single action.  Usage: pnpm sim [games]
-import { createGame, applyAction, pendingActors, victoryPoints, canBuildRoad } from '@engine/game';
+import { createGame, applyAction, pendingActors, victoryPoints, canBuildRoad, vpTargetFor } from '@engine/game';
 import { botAct } from '@engine/bot';
 import { defaultConfig, MODES, PLAYER_COLORS } from '@engine/config';
-import { SHAPES } from '@engine/board';
+import { SHAPES, isShipEdge } from '@engine/board';
 import { RES } from '@engine/constants';
 import type { Action, BotLevel, Config, DevDeckId, GameState, PlayerConfig, ShapeId } from '@engine/types';
 
@@ -33,6 +33,28 @@ export function makeConfig(i: number): Config {
   if (i % 9 === 0) c.rules.devDeck = (['war', 'progress', 'none'] as DevDeckId[])[i % 3]!;
   c.rules.robberGrace = i % 10 === 0 ? 2 : 0;
   return c;
+}
+
+// Seafarers invariants: ship counts, ship edges, no road+ship overlap, connectivity, pirate, gold phase
+function checkSea(s: GameState, errs: string[]) {
+  const bd = s.board;
+  const ships = s.ships!;
+  for (const p of s.players) {
+    const n = Object.values(ships).filter(x => x.owner === p.id).length;
+    if (n + (p.shipsLeft ?? 0) !== (s.config.rules.maxShips ?? 15)) errs.push(`barcos ${p.id}: ${n}+${p.shipsLeft}`);
+  }
+  for (const k in ships) {
+    const E = bd.edges[+k]!;
+    if (!isShipEdge(bd, E)) errs.push(`barco fuera de arista de mar ${k}`);
+    if (s.roads[k] !== undefined) errs.push(`camino y barco en ${k}`);
+    const o = ships[k]!.owner;
+    const ok = [E.a, E.b].some(v => (s.buildings[v] && s.buildings[v]!.owner === o) || (!s.buildings[v] && bd.vertices[v]!.edges.some(e => e !== +k && ships[e]?.owner === o)));
+    // a rival may legally settle between two ships later, so only check ends that lead to a building or a free vertex
+    if (!ok && !bd.vertices[E.a]!.edges.concat(bd.vertices[E.b]!.edges).some(e => e !== +k && ships[e]?.owner === o)) errs.push(`barco suelto ${k}`);
+  }
+  const pr = bd.pirate;
+  if (pr === undefined || (pr !== -1 && !bd.sea.some(t => t.id === pr))) errs.push(`pirata en casilla inválida ${pr}`);
+  if (Object.values(s.goldPending ?? {}).some(n => n > 0) && s.phase !== 'gold' && s.phase !== 'gameOver') errs.push(`oro pendiente fuera de fase gold (${s.phase})`);
 }
 
 function check(s: GameState, where: string) {
@@ -69,8 +91,9 @@ function check(s: GameState, where: string) {
   // dev cards conservation
   const devHeld = s.players.reduce((a, p) => a + p.dev.length, 0);
   if (devHeld + s.devDeck.length > s.devTotal) errs.push('cartas de desarrollo duplicadas');
-  if (s.phase !== 'gameOver' && s.phase !== 'setup' && victoryPoints(s, s.current) >= R.vpTarget) errs.push('ganador no detectado');
+  if (s.phase !== 'gameOver' && s.phase !== 'setup' && victoryPoints(s, s.current) >= vpTargetFor(s, s.current)) errs.push('ganador no detectado');
   if (s.phase === 'discard' && !Object.keys(s.pendingDiscards).length) errs.push('fase descarte vacía');
+  if (s.ships) checkSea(s, errs);
   if (errs.length) throw new Error(`[${where}] ` + errs.join('; '));
 }
 
@@ -155,9 +178,101 @@ console.log(`\nPartidas: ${summary.games}, terminadas: ${summary.finished}, erro
 for (const [k, v] of Object.entries(summary.byShape)) console.log(`  ${k.padEnd(9)} ${v.done}/${v.n} terminadas, ${(v.turns / v.n).toFixed(0)} turnos`);
 }
 
+// ---------- Seafarers sim: separate config generator so makeConfig output (used by determinism) is untouched ----------
+const seaShapes: ShapeId[] = ['seaIslands', 'mainland', 'islands'];
+const seaModes = MODES.filter(m => !['flipped', 'fog', 'blindfold', 'hiddenNumbers'].includes(m.id));
+
+export function makeSeaConfig(i: number): Config {
+  const c = defaultConfig();
+  c.seed = 5000 + i * 7919;
+  const np = 2 + (i % 5);
+  c.players = Array.from({ length: np }, (_, k): PlayerConfig => ({ name: 'B' + k, kind: 'bot', level: (['easy', 'normal', 'hard'] as BotLevel[])[(i + k * 2) % 3], color: PLAYER_COLORS[k]! }));
+  c.rules.expansion = 'seafarers';
+  c.rules.islandBonus = i % 4 !== 3;
+  c.map.shape = seaShapes[i % seaShapes.length]!;
+  c.map.size = 0;
+  c.map.gold = i % 3 === 0 ? 2 : 0;
+  c.map.ports = (['normal', 'many', 'few', 'none'] as const)[i % 4]!;
+  seaModes.forEach((m, k) => m.set(c, ((i * 2654435761) >>> (k + 3)) % 4 === 0));
+  if (i % 6 === 0) c.rules.startBonus = 1;
+  return c;
+}
+
+export interface SeaSummary extends Summary {
+  settledOther: number;
+  ships: number;
+  pirate: number;
+  moves: number;
+}
+
+function islandsOf(s: GameState): Map<number, Set<number>> {
+  const own = new Map<number, Set<number>>();
+  for (const k in s.buildings) {
+    const b = s.buildings[k]!;
+    const set = own.get(b.owner) ?? own.set(b.owner, new Set()).get(b.owner)!;
+    for (const h of s.board.vertices[+k]!.hexes) set.add(s.board.tiles[h]!.island ?? -1);
+  }
+  return own;
+}
+
+export function runSeaSim(GAMES: number): SeaSummary {
+  const sum: SeaSummary = { games: 0, finished: 0, turns: 0, byShape: {}, winnerVP: [], errors: 0, settledOther: 0, ships: 0, pirate: 0, moves: 0 };
+  for (let i = 0; i < GAMES; i++) {
+    const cfg = makeSeaConfig(i);
+    try {
+      const s = createGame(cfg);
+      let guard = 0;
+      let startIslands: Map<number, Set<number>> | null = null;
+      while (s.phase !== 'gameOver' && s.turn < 1500) {
+        if (++guard > 200000) throw new Error('bucle infinito');
+        if (!startIslands && s.phase !== 'setup') startIslands = islandsOf(s);
+        const actors = pendingActors(s);
+        let acted = false;
+        for (const pid of actors) {
+          const a = botAct(s, pid);
+          if (!a) continue;
+          const r = applyAction(s, a);
+          if (!r.ok) throw new Error(`acción ilegal del bot ${JSON.stringify(a)} en fase ${s.phase}: ${r.error}`);
+          check(s, a.type);
+          if (a.type === 'build' && a.what === 'ship') sum.ships++;
+          if (a.type === 'moveShip') sum.moves++;
+          if (a.type === 'moveRobber' && a.target === 'pirate') sum.pirate++;
+          acted = true;
+          break;
+        }
+        if (!acted) throw new Error(`bloqueo: fase=${s.phase} actores=${actors}`);
+      }
+      sum.games++;
+      sum.turns += s.turn;
+      const sh = (sum.byShape[cfg.map.shape] ||= { n: 0, done: 0, turns: 0 });
+      sh.n++;
+      sh.turns += s.turn;
+      if (s.phase === 'gameOver') {
+        sum.finished++;
+        sh.done++;
+        sum.winnerVP.push(victoryPoints(s, s.winner!));
+      }
+      if ([...islandsOf(s)].some(([pid, set]) => [...set].some(i => !(startIslands!.get(pid) ?? new Set()).has(i)))) sum.settledOther++;
+    } catch (e) {
+      sum.errors++;
+      console.log(`❌ partida marítima ${i} seed=${cfg.seed} shape=${cfg.map.shape} players=${cfg.players.length} rules=${JSON.stringify(cfg.rules)}`);
+      console.log('   ', (e as Error).stack!.split('\n').slice(0, 4).join('\n    '));
+      if (sum.errors > 5) break;
+    }
+  }
+  return sum;
+}
+
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const summary = runSim(+(process.argv[2] ?? 0) || 200);
+  const args = process.argv.slice(2).filter(a => a !== '--');
+  const sea = args.includes('--sea');
+  const n = +(args.find(a => /^\d+$/.test(a)) ?? 0) || 200;
+  const summary = sea ? runSeaSim(n) : runSim(n);
   printSummary(summary);
+  if (sea) {
+    const w = summary as SeaSummary;
+    console.log(`Marítimas: otra isla ${w.settledOther}/${w.games}, barcos ${w.ships}, pirata ${w.pirate}, barcos movidos ${w.moves}`);
+  }
   process.exit(summary.errors ? 1 : 0);
 }

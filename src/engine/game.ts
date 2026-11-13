@@ -307,14 +307,26 @@ function onPirate(s: GameState, E: { sea?: number[] }): boolean {
 
 /**
  * Open ship: at least one endpoint has neither an own building nor another own ship.
- * Known gap: a closed ring of ships touching no settlement counts as closed here (official rule: all open).
+ * Official FAQ: a closed ring of ships touching no own settlement or city counts as open too (every ship in it).
  */
 function isOpenShip(s: GameState, pid: number, e: number): boolean {
-  const E = s.board.edges[e]!;
-  return [E.a, E.b].some(v => {
+  const bd = s.board;
+  const endOpen = (k: number) => [bd.edges[k]!.a, bd.edges[k]!.b].some(v => {
     if (s.buildings[v]?.owner === pid) return false;
-    return !s.board.vertices[v]!.edges.some(x => x !== e && s.ships?.[x]?.owner === pid);
+    return !bd.vertices[v]!.edges.some(x => x !== k && s.ships?.[x]?.owner === pid);
   });
+  if (endOpen(e)) return true;
+  // closed: walk the connected cluster of own ships; no own building anywhere on it means it floats free
+  const seen = new Set<number>([e]);
+  const stack = [e];
+  while (stack.length) {
+    const k = stack.pop()!;
+    for (const v of [bd.edges[k]!.a, bd.edges[k]!.b]) {
+      if (s.buildings[v]?.owner === pid) return false;
+      for (const x of bd.vertices[v]!.edges) if (!seen.has(x) && s.ships?.[x]?.owner === pid) { seen.add(x); stack.push(x); }
+    }
+  }
+  return true;
 }
 
 /** Ships the player may move right now (open, not built this turn, not on the pirate hex). */

@@ -5,6 +5,7 @@ import {
   canAfford, handSize, victoryPoints, tradeRatio, playableDev, pendingActors,
   legalSetupSettlements, legalSetupRoads, legalSetupShips, legalRoads, legalShips, legalSettlements, legalCities,
   legalRobberTiles, stealTargets, legalPirateTiles, pirateTargets, zeroRes, viewFor, sbpActor, vpTargetFor,
+  movableShips, shipDestinations,
 } from './game';
 import { isShipEdge } from './board';
 import type { Action, ActionOf, BotLevel, GameState, Hand, Res, Tile, TileKind } from './types';
@@ -65,6 +66,8 @@ function vertexScore(s: GameState, pid: number, v: number, prod: Hand): number {
     const port = s.board.ports[V.port]!;
     score += port.type === 'any' ? 1 : prod[port.type] >= 4 ? 2.2 : 0.4;
   }
+  // Seafarers: a coast with free sea edges leaves room for ships (blocked by nothing yet)
+  if (s.ships && V.edges.some(e => isShipEdge(s.board, s.board.edges[e]!) && !s.ships![e])) score += 0.5;
   return score;
 }
 
@@ -166,9 +169,13 @@ function bestShip(s: GameState, pid: number): number | null {
 }
 
 function bestRoad(s: GameState, pid: number): number | null {
+  return bestRoadScored(s, pid).e;
+}
+
+function bestRoadScored(s: GameState, pid: number): { e: number | null; sc: number } {
   const prod = production(s, pid);
   const roads = legalRoads(s, pid);
-  if (!roads.length) return null;
+  if (!roads.length) return { e: null, sc: 0 };
   let bi: number | null = null, bs = 0;
   const rival = (v: number) => s.buildings[v] && s.buildings[v].owner !== pid;
   for (const e of roads) {
@@ -189,11 +196,150 @@ function bestRoad(s: GameState, pid: number): number | null {
       bi = e;
     }
   }
-  return bi;
+  return { e: bi, sc: bs };
+}
+
+// ---------- Seafarers: overseas expansion planning ----------
+interface SeaPlan {
+  target: number; // vertex to settle
+  dist: number; // new ships needed
+  first: number; // next ship edge to build now (always a legal ship edge)
+  score: number;
+}
+
+const SHIP_COST_PTS = 1.8; // how many vertex-score points one extra ship is worth
+
+/** islands where the player has a building or started (no island bonus left there) */
+function seenIslands(s: GameState, pid: number): Set<number> {
+  const seen = new Set<number>(s.islandBonus?.[pid] ?? []);
+  for (const k in s.buildings) {
+    if (s.buildings[k]!.owner !== pid) continue;
+    for (const h of s.board.vertices[+k]!.hexes) {
+      const i = s.board.tiles[h]!.island;
+      if (i !== undefined) seen.add(i);
+    }
+  }
+  return seen;
+}
+
+/** value of settling each open vertex that is not reachable from the player's land network yet */
+function seaTargets(s: GameState, pid: number): Map<number, number> {
+  const prod = production(s, pid);
+  const reach = new Set(legalSettlements(s, pid));
+  const seen = seenIslands(s, pid);
+  const bonus = !!s.config.rules.islandBonus;
+  const out = new Map<number, number>();
+  for (const v of s.board.vertices) {
+    if (v.hexes.length === 0 || !openFor(s, v.id) || reach.has(v.id)) continue;
+    let val = vertexScore(s, pid, v.id, prod);
+    if (bonus && v.hexes.some(h => { const i = s.board.tiles[h]!.island; return i !== undefined && !seen.has(i); })) val += 6; // 2 VP
+    out.set(v.id, val);
+  }
+  return out;
+}
+
+/** cheapest ship paths (0-1 BFS: own ships are free) from the player's buildings and ship ends */
+function shipDistances(s: GameState, pid: number): { dist: Map<number, number>; via: Map<number, number> } {
+  const bd = s.board;
+  const dist = new Map<number, number>();
+  const via = new Map<number, number>(); // vertex -> edge it was reached by
+  const dq: number[] = [];
+  const push = (v: number, d: number, front: boolean) => { dist.set(v, d); if (front) dq.unshift(v); else dq.push(v); };
+  for (const k in s.buildings) if (s.buildings[k]!.owner === pid) push(+k, 0, false);
+  for (const k in s.ships) {
+    if (s.ships[k]!.owner !== pid) continue;
+    const E = bd.edges[+k]!;
+    for (const v of [E.a, E.b]) if (!dist.has(v) && !(s.buildings[v] && s.buildings[v]!.owner !== pid)) push(v, 0, false);
+  }
+  const seenV = new Set<number>();
+  while (dq.length) {
+    const v = dq.shift()!;
+    if (seenV.has(v)) continue;
+    seenV.add(v);
+    const d = dist.get(v)!;
+    const b = s.buildings[v];
+    if (b && b.owner !== pid) continue; // rival buildings cut the route
+    for (const e of bd.vertices[v]!.edges) {
+      const E = bd.edges[e]!;
+      if (!isShipEdge(bd, E) || s.roads[e] !== undefined) continue;
+      const sh = s.ships![e];
+      if (sh && sh.owner !== pid) continue;
+      const p = bd.pirate;
+      if (!sh && p !== undefined && p >= 0 && E.sea?.includes(p)) continue;
+      const u = E.a === v ? E.b : E.a;
+      const nd = d + (sh ? 0 : 1);
+      if (nd < (dist.get(u) ?? Infinity)) {
+        dist.set(u, nd);
+        via.set(u, e);
+        if (sh) dq.unshift(u); else dq.push(u);
+      }
+    }
+  }
+  return { dist, via };
+}
+
+function bestSeaPlan(s: GameState, pid: number, targets: Map<number, number>, legal?: Set<number>): SeaPlan | null {
+  const { dist, via } = shipDistances(s, pid);
+  let best: SeaPlan | null = null;
+  for (const [t, val] of targets) {
+    const d = dist.get(t);
+    if (d === undefined || d < 1) continue;
+    const score = val - d * SHIP_COST_PTS;
+    if (best && score <= best.score) continue;
+    // walk back to the source; the last new (ship-less) edge on the way is the one to build now
+    let v = t;
+    let first = -1;
+    for (let e = via.get(v); e !== undefined && v >= 0; e = via.get(v)) {
+      const E = s.board.edges[e]!;
+      if (!s.ships![e]) first = e;
+      v = E.a === v ? E.b : E.a;
+    }
+    if (first < 0) continue;
+    if (legal && !legal.has(first)) continue;
+    best = { target: t, dist: d, first, score };
+  }
+  return best;
+}
+
+/** the next ship toward the best overseas settlement spot, or null when there is none worth it */
+function seaPlan(s: GameState, pid: number): SeaPlan | null {
+  if (!s.ships || (s.players[pid]!.shipsLeft ?? 0) <= 0) return null;
+  const legal = new Set(legalShips(s, pid));
+  return legal.size ? bestSeaPlan(s, pid, seaTargets(s, pid), legal) : null;
+}
+
+/** one ship move per turn: relocate a dead-end ship if that makes the overseas plan clearly better */
+function shipMove(s: GameState, pid: number): Action | null {
+  if (!s.ships || s.shipMoved) return null;
+  const movable = movableShips(s, pid);
+  if (!movable.length) return null;
+  const targets = seaTargets(s, pid);
+  if (!targets.size) return null;
+  const base = bestSeaPlan(s, pid, targets);
+  const baseScore = base ? base.score : -Infinity;
+  const evalScore = () => bestSeaPlan(s, pid, targets)?.score ?? -Infinity;
+  let pick: { from: number; to: number } | null = null;
+  let ps = baseScore + 1; // must clearly improve
+  for (const from of movable) {
+    const sh = s.ships[from]!;
+    const dests = shipDestinations(s, pid, from);
+    delete s.ships[from];
+    try {
+      for (const to of dests) {
+        s.ships[to] = sh;
+        const sc = evalScore();
+        delete s.ships[to];
+        if (sc > ps) { ps = sc; pick = { from, to }; }
+      }
+    } finally {
+      s.ships[from] = sh;
+    }
+  }
+  return pick ? { type: 'moveShip', pid, from: pick.from, to: pick.to } : null;
 }
 
 interface Target {
-  what: 'city' | 'settlement' | 'road' | 'dev';
+  what: 'city' | 'settlement' | 'road' | 'ship' | 'dev';
   cost: Partial<Hand>;
   w: number;
 }
@@ -205,10 +351,21 @@ function chooseTarget(s: GameState, pid: number): Target | null {
   const spots = p.settlementsLeft > 0 ? legalSettlements(s, pid) : [];
   if (p.citiesLeft > 0 && hasSett) opts.push({ what: 'city', cost: COSTS.city, w: 0.1 });
   if (spots.length) opts.push({ what: 'settlement', cost: COSTS.settlement, w: 0 });
+  else if (s.ships && p.settlementsLeft > 0 && shipOverRoad(s, pid)) opts.push({ what: 'ship', cost: COSTS.ship, w: 0.3 });
   else if (p.roadsLeft > 0 && p.settlementsLeft > 0 && bestRoad(s, pid) !== null) opts.push({ what: 'road', cost: COSTS.road, w: 0.3 });
   if (s.devDeck.length) opts.push({ what: 'dev', cost: COSTS.dev, w: 1.2 });
   if (!opts.length) return null;
   return best(opts, o => -(missing(p.res, o.cost).n + o.w));
+}
+
+/** Seafarers: the overseas plan, when it beats the best land road (ships before roads toward far shores) */
+function shipOverRoad(s: GameState, pid: number): SeaPlan | null {
+  const plan = seaPlan(s, pid);
+  if (!plan) return null;
+  const p = s.players[pid]!;
+  if (p.roadsLeft <= 0) return plan;
+  const road = bestRoadScored(s, pid);
+  return road.e === null || plan.score + SHIP_COST_PTS >= road.sc ? plan : null;
 }
 
 function surplus(res: Hand, cost?: Partial<Hand>): Hand {
@@ -248,7 +405,7 @@ function tryDevPlay(s: GameState, pid: number): ActionOf<'playDev'> | null {
     pickTwo.forEach(r => (need[r] = (need[r] || 0) + 1));
     if (resEntries(need).every(([r, k]) => s.bank[r] >= k)) return { type: 'playDev', pid, card: 'yearOfPlenty', res: pickTwo };
   }
-  if (playable.includes('roadBuilding') && p.roadsLeft > 0 && bestRoad(s, pid) !== null) return { type: 'playDev', pid, card: 'roadBuilding' };
+  if (playable.includes('roadBuilding') && ((p.roadsLeft > 0 && bestRoad(s, pid) !== null) || (s.ships && shipOverRoad(s, pid)))) return { type: 'playDev', pid, card: 'roadBuilding' };
   if (playable.includes('knight') && noise(s, 11) < 0.3) return { type: 'playDev', pid, card: 'knight' };
   return null;
 }
@@ -287,14 +444,12 @@ function mainAction(s: GameState, pid: number, buildOnly = false): Action | null
     const prod = production(s, pid);
     return { type: 'build', pid, what: 'settlement', at: best(spots, v => vertexScore(s, pid, v, prod) + noise(s, v) * L.noise)! };
   }
-  if (s.ships && !spots.length && p.settlementsLeft > 0 && canAfford(p.res, COSTS.ship)) {
-    const sh = bestShip(s, pid);
-    if (sh !== null) return { type: 'build', pid, what: 'ship', at: sh };
-  }
+  const wantShip = s.ships && !spots.length && p.settlementsLeft > 0 ? shipOverRoad(s, pid) : null;
+  if (wantShip && canAfford(p.res, COSTS.ship)) return { type: 'build', pid, what: 'ship', at: wantShip.first };
   if (p.roadsLeft > 0 && canAfford(p.res, COSTS.road)) {
     const richInRoad = p.res.wood >= 3 && p.res.brick >= 3;
     const raceRoad = p.roadLen >= 4 && s.longestRoad.owner !== pid && p.roadLen + 1 > s.longestRoad.len;
-    if ((!spots.length && p.settlementsLeft > 0) || richInRoad || raceRoad) {
+    if (((!spots.length && p.settlementsLeft > 0) || richInRoad || raceRoad) && !(wantShip && !richInRoad && !raceRoad)) {
       const e = bestRoad(s, pid);
       if (e !== null) return { type: 'build', pid, what: 'road', at: e };
     }
@@ -323,6 +478,10 @@ function mainAction(s: GameState, pid: number, buildOnly = false): Action | null
         if (give) return { type: 'proposeTrade', pid, give: { [give]: 1 }, get: { [need]: 1 } };
       }
     }
+  }
+  if (s.ships && !buildOnly) {
+    const mv = shipMove(s, pid);
+    if (mv) return mv;
   }
   return { type: 'endTurn', pid };
 }
@@ -419,13 +578,18 @@ function robber(s: GameState, pid: number): Action {
 function pirateMove(s: GameState, pid: number, robberScore: number): Action | null {
   const tiles = legalPirateTiles(s, pid);
   if (!tiles.length) return null;
+  const maxVP = Math.max(...s.players.filter(p => p.id !== pid && !p.retired).map(p => victoryPoints(s, p.id, false)));
+  // a ship is open when one end touches neither the owner's building nor another ship of theirs
+  const open = (k: number, o: number) => [s.board.edges[k]!.a, s.board.edges[k]!.b].some(v => s.buildings[v]?.owner !== o && !s.board.vertices[v]!.edges.some(x => x !== k && s.ships![x]?.owner === o));
   const scoreSea = (id: number) => {
     let sc = 0;
     for (const k in s.ships) {
       const sh = s.ships[k]!;
       if (!s.board.edges[+k]!.sea?.includes(id)) continue;
-      if (sh.owner === pid) sc -= 1.5;
-      else sc += 1.5 * (1 + victoryPoints(s, sh.owner, false) / 5) + (handSize(s.players[sh.owner]!.res) ? 0.5 : 0);
+      if (sh.owner === pid) { sc -= 3; continue; }
+      const vp = victoryPoints(s, sh.owner, false);
+      // ship on the hex: pays off like a settlement does, more for the leader and for ships still growing a route
+      sc += 3 * (1 + vp / 5) + (handSize(s.players[sh.owner]!.res) ? 1 : 0) + (vp >= maxVP ? 1.5 : 0) + (open(+k, sh.owner) ? 2 : 0);
     }
     return sc + noise(s, 1000 + id) * 0.2;
   };
@@ -469,6 +633,14 @@ export function botAct(real: GameState, pid: number): Action | null {
       return v === null ? null : { type: 'placeSettlement', pid, vid: v };
     }
     const e = setupRoad(s, pid);
+    if (s.ships) {
+      const ships = legalSetupShips(s, pid);
+      // a road that leads nowhere is worth less than a ship toward another shore
+      if (ships.length && (e === null || roadTargetScore(s, pid, e, s.setup.lastVid!, production(s, pid)) <= 0)) {
+        const plan = bestSeaPlan(s, pid, seaTargets(s, pid), new Set(ships));
+        return { type: 'placeShip', pid, eid: plan ? plan.first : ships[0]! };
+      }
+    }
     if (e !== null) return { type: 'placeRoad', pid, eid: e };
     const sh = legalSetupShips(s, pid)[0];
     return sh === undefined ? null : { type: 'placeShip', pid, eid: sh };
@@ -483,10 +655,15 @@ export function botAct(real: GameState, pid: number): Action | null {
     case 'robber':
       return robber(s, pid);
     case 'roadBuilding': {
-      const e = bestRoad(s, pid);
+      const rb = s.players[pid]!.roadsLeft > 0;
+      if (s.ships) {
+        const plan = shipOverRoad(s, pid);
+        if (plan) return { type: 'build', pid, what: 'ship', at: plan.first };
+      }
+      const e = rb ? bestRoad(s, pid) : null;
       if (e !== null) return { type: 'build', pid, what: 'road', at: e };
       const any = legalRoads(s, pid);
-      if (any.length && s.players[pid]!.roadsLeft > 0) return { type: 'build', pid, what: 'road', at: any[0]! };
+      if (any.length && rb) return { type: 'build', pid, what: 'road', at: any[0]! };
       const sh = bestShip(s, pid) ?? legalShips(s, pid)[0] ?? null;
       return sh !== null ? { type: 'build', pid, what: 'ship', at: sh } : { type: 'endRoadBuilding', pid };
     }

@@ -342,6 +342,28 @@ test('open ships only: the ship attached to the own settlement is closed', () =>
   expect(G.movableShips(s, 0)).toEqual([]);
 });
 
+test('a closed ring of ships touching no own building counts as open (official FAQ)', () => {
+  const s = mainState(5);
+  s.turn = 5;
+  const bd = s.board;
+  const ring = bd.sea.find(t => t.verts!.every((v, i) => {
+    const u = t.verts![(i + 1) % 6]!;
+    const e = bd.edges.find(E => (E.a === v && E.b === u) || (E.a === u && E.b === v));
+    return !!e && isShipEdge(bd, e);
+  }))!;
+  expect(ring).toBeDefined();
+  const edges = ring.verts!.map((v, i) => {
+    const u = ring.verts![(i + 1) % 6]!;
+    return bd.edges.find(E => (E.a === v && E.b === u) || (E.a === u && E.b === v))!.id;
+  });
+  for (const e of edges) s.ships![e] = { owner: 0, built: 1 };
+  s.players[0]!.shipsLeft = 9;
+  expect(G.movableShips(s, 0).sort()).toEqual([...edges].sort());
+  // one own building on the ring closes the whole cluster
+  s.buildings[ring.verts![0]!] = { owner: 0, type: 'settlement' };
+  expect(G.movableShips(s, 0)).toEqual([]);
+});
+
 test('moveShip relocates, keeps built, once per turn; reset next turn', () => {
   const { s, path } = fleet();
   const dest = G.shipDestinations(s, 0, path[1]!);
