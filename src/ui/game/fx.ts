@@ -110,6 +110,7 @@ function handleFx(st: GameState): void {
         break;
       }
       case 'robber':
+      case 'pirate':
         play.robber();
         break;
       case 'event': {

@@ -4,7 +4,7 @@ import { RES, COSTS, pips, isRes, resEntries } from './constants';
 import {
   canAfford, handSize, victoryPoints, tradeRatio, playableDev, pendingActors,
   legalSetupSettlements, legalSetupRoads, legalSetupShips, legalRoads, legalShips, legalSettlements, legalCities,
-  legalRobberTiles, stealTargets, zeroRes, viewFor, sbpActor, vpTargetFor,
+  legalRobberTiles, stealTargets, legalPirateTiles, pirateTargets, zeroRes, viewFor, sbpActor, vpTargetFor,
 } from './game';
 import { isShipEdge } from './board';
 import type { Action, ActionOf, BotLevel, GameState, Hand, Res, Tile, TileKind } from './types';
@@ -410,7 +410,49 @@ function robber(s: GameState, pid: number): Action {
   const tile = best(away.length ? away : tiles, scoreTile)!;
   const victims = stealTargets(s, pid, tile);
   const victim = victims.length ? best(victims, v => victoryPoints(s, v, false) * 2 + handSize(s.players[v]!.res) * 0.3)! : undefined;
-  return { type: 'moveRobber', pid, tile, victim };
+  const land: Action = { type: 'moveRobber', pid, tile, victim };
+  const pirate = pirateMove(s, pid, scoreTile(tile));
+  return pirate ?? land;
+}
+
+// Seafarers: a pirate move beats the robber move when it hurts the opponents more.
+function pirateMove(s: GameState, pid: number, robberScore: number): Action | null {
+  const tiles = legalPirateTiles(s, pid);
+  if (!tiles.length) return null;
+  const scoreSea = (id: number) => {
+    let sc = 0;
+    for (const k in s.ships) {
+      const sh = s.ships[k]!;
+      if (!s.board.edges[+k]!.sea?.includes(id)) continue;
+      if (sh.owner === pid) sc -= 1.5;
+      else sc += 1.5 * (1 + victoryPoints(s, sh.owner, false) / 5) + (handSize(s.players[sh.owner]!.res) ? 0.5 : 0);
+    }
+    return sc + noise(s, 1000 + id) * 0.2;
+  };
+  const away = tiles.filter(id => id !== s.board.pirateFrom);
+  const tile = best(away.length ? away : tiles, scoreSea)!;
+  if (scoreSea(tile) <= robberScore) return null;
+  const victims = pirateTargets(s, pid, tile);
+  const victim = victims.length ? best(victims, v => victoryPoints(s, v, false) * 2 + handSize(s.players[v]!.res) * 0.3)! : undefined;
+  return { type: 'moveRobber', pid, tile, victim, target: 'pirate' };
+}
+
+function gold(s: GameState, pid: number): Action {
+  const p = s.players[pid]!;
+  const bank = { ...s.bank };
+  let need = Math.min(s.goldPending![pid]!, RES.reduce((a, r) => a + bank[r], 0));
+  const tgt = chooseTarget(s, pid);
+  const hand = { ...p.res };
+  const out = zeroRes();
+  while (need > 0) {
+    // the resource the target needs most (or, failing that, the one held least)
+    const r = best(RES.filter(x => bank[x] > 0), x => ((tgt && tgt.cost[x]) || 0) * 2 - hand[x])!;
+    hand[r]++;
+    bank[r]--;
+    out[r]++;
+    need--;
+  }
+  return { type: 'chooseGold', pid, res: out };
 }
 
 export function botAct(real: GameState, pid: number): Action | null {
@@ -418,6 +460,7 @@ export function botAct(real: GameState, pid: number): Action | null {
   const s = viewFor(real, pid); // in fog mode bots only know what they can see
   if (!pendingActors(s).includes(pid)) return null;
   if (s.phase === 'discard') return s.pendingDiscards[pid] ? discard(s, pid) : null;
+  if (s.phase === 'gold') return s.goldPending?.[pid] ? gold(s, pid) : null;
   if (s.trade && s.trade.from !== pid && s.trade.responses[pid] == null) return respond(s, pid);
   if (s.phase === 'setup') {
     if (s.setup.queue[s.setup.idx]!.pid !== pid) return null;

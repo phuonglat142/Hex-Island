@@ -102,6 +102,9 @@ export function createGame(configIn: Config): GameState {
   };
   if (expansionOf(config) === 'seafarers') {
     s.ships = {};
+    s.shipMoved = false;
+    s.goldPending = {};
+    board.pirate = -1;
     for (const p of s.players) p.shipsLeft = R.maxShips ?? 15;
   }
   s.devDeck = buildDevDeck(config, n, rng);
@@ -267,6 +270,7 @@ function canSetupShip(s: GameState, pid: number, e: number): boolean {
 export function canBuildShip(s: GameState, pid: number, e: number): boolean {
   const E = s.board.edges[e];
   if (!s.ships || !E || !isShipEdge(s.board, E) || s.roads[e] !== undefined || s.ships[e]) return false;
+  if (onPirate(s, E)) return false;
   for (const v of [E.a, E.b]) {
     const b = s.buildings[v];
     if (b && b.owner === pid) return true;
@@ -274,6 +278,49 @@ export function canBuildShip(s: GameState, pid: number, e: number): boolean {
     if (s.board.vertices[v]!.edges.some(x => x !== e && s.ships![x]?.owner === pid)) return true;
   }
   return false;
+}
+
+/** Seafarers: does this edge border the hex the pirate sits on? */
+function onPirate(s: GameState, E: { sea?: number[] }): boolean {
+  const p = s.board.pirate;
+  return p !== undefined && p >= 0 && !!E.sea?.includes(p);
+}
+
+/**
+ * Open ship: at least one endpoint has neither an own building nor another own ship.
+ * Known gap: a closed ring of ships touching no settlement counts as closed here (official rule: all open).
+ */
+function isOpenShip(s: GameState, pid: number, e: number): boolean {
+  const E = s.board.edges[e]!;
+  return [E.a, E.b].some(v => {
+    if (s.buildings[v]?.owner === pid) return false;
+    return !s.board.vertices[v]!.edges.some(x => x !== e && s.ships?.[x]?.owner === pid);
+  });
+}
+
+/** Ships the player may move right now (open, not built this turn, not on the pirate hex). */
+export function movableShips(s: GameState, pid: number): number[] {
+  if (!s.ships || s.shipMoved) return [];
+  const out: number[] = [];
+  for (const k in s.ships) {
+    const sh = s.ships[k]!;
+    const e = +k;
+    if (sh.owner !== pid || sh.built === s.turn || onPirate(s, s.board.edges[e]!) || !isOpenShip(s, pid, e)) continue;
+    out.push(e);
+  }
+  return out;
+}
+
+/** Edges the ship on `from` could be moved to (checked as if it had been lifted off its origin). */
+export function shipDestinations(s: GameState, pid: number, from: number): number[] {
+  const sh = s.ships?.[from];
+  if (!s.ships || !sh || sh.owner !== pid) return [];
+  delete s.ships[from];
+  try {
+    return s.board.edges.filter(E => E.id !== from && canBuildShip(s, pid, E.id)).map(E => E.id);
+  } finally {
+    s.ships[from] = sh;
+  }
 }
 
 export function canBuildRoad(s: GameState, pid: number, e: number): boolean {
@@ -344,6 +391,34 @@ export function robberVictims(s: GameState, pid: number, tile: number): number[]
 
 export const stealTargets = (s: GameState, pid: number, tile: number): number[] => robberVictims(s, pid, tile).filter(v => !friendlyProtected(s, v));
 
+/** Seafarers: owners of ships on edges of the sea tile (coastal settlements do not count). */
+export function pirateVictims(s: GameState, pid: number, tile: number): number[] {
+  const out = new Set<number>();
+  if (!s.ships) return [];
+  for (const k in s.ships) {
+    const o = s.ships[k]!.owner;
+    if (o !== pid && s.board.edges[+k]!.sea?.includes(tile) && handSize(s.players[o]!.res) > 0) out.add(o);
+  }
+  return [...out];
+}
+
+export const pirateTargets = (s: GameState, pid: number, tile: number): number[] => pirateVictims(s, pid, tile).filter(v => !friendlyProtected(s, v));
+
+export function legalPirateTiles(s: GameState, pid: number): number[] {
+  if (s.board.pirate === undefined) return [];
+  const all = s.board.sea.filter(t => t.id !== undefined && t.id !== s.board.pirate).map(t => t.id!);
+  if (!s.config.rules.friendlyRobber) return all;
+  const protectedOn = (id: number) => {
+    for (const k in s.ships) {
+      const o = s.ships![k]!.owner;
+      if (o !== pid && s.board.edges[+k]!.sea?.includes(id) && friendlyProtected(s, o)) return true;
+    }
+    return false;
+  };
+  const ok = all.filter(id => !protectedOn(id));
+  return ok.length ? ok : all;
+}
+
 export function legalRobberTiles(s: GameState, pid: number): number[] {
   const all = s.board.tiles.filter(t => t.id !== s.board.robber).map(t => t.id);
   if (!s.config.rules.friendlyRobber) return all;
@@ -382,6 +457,7 @@ export function pendingActors(s: GameState): number[] {
   }
   if (s.phase === 'setup') return [s.setup.queue[s.setup.idx]!.pid];
   if (s.phase === 'discard') return Object.keys(s.pendingDiscards).map(Number).filter(pid => !s.players[pid]!.retired);
+  if (s.phase === 'gold') return Object.keys(s.goldPending || {}).map(Number).filter(pid => !s.players[pid]!.retired);
   const out = [s.current];
   if (s.trade) for (const pid of s.trade.to) if (s.trade.responses[pid] == null && !s.players[pid]!.retired) out.push(pid);
   return out;
@@ -527,6 +603,12 @@ function produce(s: GameState, sum: number) {
       if (!b || s.players[b.owner]!.retired) continue;
       const amt = (b.type === 'city' ? 2 : 1) * mult;
       let r = t.res;
+      if (r === 'gold' && s.goldPending) {
+        // Seafarers: the player picks the resource later (phase 'gold')
+        s.goldPending[b.owner] = (s.goldPending[b.owner] || 0) + amt;
+        produced = true;
+        continue;
+      }
       if (r === 'gold') {
         // gold gives the resource the player has least of (hand + pending gains)
         const p = s.players[b.owner]!;
@@ -561,6 +643,15 @@ function produce(s: GameState, sum: number) {
     })
     .filter(Boolean);
   if (summary.length) log(s, '📦 ' + summary.join(' · ')); // only icons and numbers: nothing to translate
+}
+
+/** Seafarers: drop gold nobody can be paid (empty bank) and move on once every pick is done. */
+function settleGold(s: GameState) {
+  if (!s.goldPending) return;
+  const bank = RES.reduce((a, r) => a + s.bank[r], 0);
+  for (const k of Object.keys(s.goldPending)) if (bank <= 0 || s.players[+k]!.retired) delete s.goldPending[k];
+  if (Object.keys(s.goldPending).length) s.phase = 'gold';
+  else if (s.phase === 'gold') s.phase = 'main';
 }
 
 function rollDice(s: GameState): [number, number] {
@@ -928,6 +1019,7 @@ H.roll = (s, a) => {
   if (sum !== 7) {
     produce(s, sum);
     s.phase = 'main';
+    settleGold(s);
     return;
   }
   const R = s.config.rules;
@@ -972,6 +1064,7 @@ H.discard = (s, a) => {
 H.moveRobber = (s, a) => {
   if (s.phase !== 'robber') fail('Chưa phải lúc di chuyển kẻ trộm.');
   if (a.pid !== s.current) fail('Chưa tới lượt bạn.');
+  if (a.target === 'pirate') return movePirate(s, a);
   const known = s.config.modes.fog ? viewFor(s, a.pid) : s;
   if (!legalRobberTiles(known, a.pid).includes(a.tile)) fail('Không đặt kẻ trộm ở đó được.');
   const victims = stealTargets(s, a.pid, a.tile);
@@ -992,6 +1085,64 @@ H.moveRobber = (s, a) => {
     log(s, `🫳 @${a.pid} cướp một thẻ của @${victim}.`, a.pid);
   }
   s.phase = s.robberReturn;
+};
+
+function movePirate(s: GameState, a: ActionOf<'moveRobber'>) {
+  if (s.board.pirate === undefined) fail('Ván này không có hải tặc.');
+  if (!legalPirateTiles(s, a.pid).includes(a.tile)) fail('Không đặt hải tặc ở đó được.');
+  const victims = pirateTargets(s, a.pid, a.tile);
+  let victim = a.victim;
+  if (victims.length === 1 && victim == null) victim = victims[0];
+  if (victims.length && (victim == null || !victims.includes(victim))) fail('Chọn người để cướp.');
+  if (!victims.length) victim = null;
+  s.board.pirateFrom = s.board.pirate;
+  s.board.pirate = a.tile;
+  s.fx.push({ kind: 'pirate', tile: a.tile });
+  log(s, `🏴‍☠️ @${a.pid} di chuyển hải tặc.`, a.pid);
+  if (victim != null) {
+    const r = stealRandom(s, victim, a.pid);
+    s.fx.push({ kind: 'steal', from: victim, to: a.pid, res: r });
+    log(s, `🫳 @${a.pid} cướp một thẻ của @${victim}.`, a.pid);
+  }
+  s.phase = s.robberReturn;
+}
+
+H.moveShip = (s, a) => {
+  assertMain(s, a);
+  if (!s.ships) fail('Ván này không có tàu.');
+  if (s.shipMoved) fail('Mỗi lượt chỉ dời được một tàu.');
+  if (!movableShips(s, a.pid).includes(a.from)) fail('Tàu này không dời được.');
+  if (!shipDestinations(s, a.pid, a.from).includes(a.to)) fail('Không dời tàu tới đó được.');
+  const sh = s.ships[a.from]!;
+  delete s.ships[a.from];
+  s.ships[a.to] = sh; // `built` stays: moving does not make it a new ship
+  s.shipMoved = true;
+  s.fx.push({ kind: 'shipMoved', pid: a.pid, from: a.from, to: a.to });
+  log(s, `⛵ @${a.pid} dời một chiếc tàu.`, a.pid);
+  updateLongestRoad(s);
+};
+
+H.chooseGold = (s, a) => {
+  if (s.phase !== 'gold') fail('Chưa ai phải chọn tài nguyên.');
+  const pending = s.goldPending?.[a.pid];
+  if (!pending) fail('Bạn không phải chọn tài nguyên.');
+  const res = a.res || {};
+  if (!validOffer(res)) fail('Số thẻ không hợp lệ.');
+  const bank = RES.reduce((t, r) => t + s.bank[r], 0);
+  const need = Math.min(pending, bank);
+  const total = RES.reduce((t, r) => t + (res[r] || 0), 0);
+  if (total !== need) fail(`Bạn phải chọn đúng ${need} thẻ.`);
+  for (const r of RES) if ((res[r] || 0) > s.bank[r]) fail('Ngân hàng không đủ.');
+  for (const r of RES) {
+    const k = res[r] || 0;
+    if (!k) continue;
+    giveFromBank(s, a.pid, r, k);
+    s.fx.push({ kind: 'gain', pid: a.pid, res: r, n: k });
+  }
+  delete s.goldPending![a.pid];
+  const parts = RES.filter(r => res[r]).map(r => `${res[r]}${resName(r)}`);
+  log(s, `🪙 @${a.pid} chọn ${parts.join(' ')} từ mỏ vàng.`, a.pid);
+  settleGold(s);
 };
 
 function assertMain(s: GameState, a: Action) {
@@ -1241,6 +1392,10 @@ function advanceTurn(s: GameState) {
   s.devPlayed = false;
   s.freeRoads = 0;
   s.sbp = null;
+  if (s.ships) {
+    s.shipMoved = false;
+    s.goldPending = {};
+  }
   s.phase = 'roll';
   if (wrapped) {
     s.round++;
@@ -1338,6 +1493,10 @@ H.retirePlayer = (s, a) => {
   s.fx.push({ kind: 'retired', pid });
   // keep the game flowing
   delete s.pendingDiscards[pid];
+  if (s.goldPending) {
+    delete s.goldPending[pid];
+    if (s.phase === 'gold' && !Object.keys(s.goldPending).length) s.phase = 'main';
+  }
   if (s.phase === 'setup') {
     const st = s.setup;
     const cur = st.queue[st.idx]!;

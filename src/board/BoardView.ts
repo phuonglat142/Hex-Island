@@ -225,6 +225,10 @@ export class BoardView implements BoardRenderer {
         const t = bd.tiles[id]!;
         gR.append(S('polygon', { points: hexPoints(t.x * U, t.y * U, U * 0.9), class: 'hot-tile', onclick: (e: Event) => pick(id, e) }));
       }
+      for (const id of inter.sea || []) {
+        const t = bd.sea[id]!;
+        gR.append(S('polygon', { points: hexPoints(t.x * U, t.y * U, U * 0.9), class: 'hot-tile', onclick: (e: Event) => { if (this.dragging) return; e.stopPropagation(); inter.onPickSea?.(id); } }));
+      }
       svg.append(gR);
     }
 
@@ -292,6 +296,17 @@ export class BoardView implements BoardRenderer {
       g.append(S('path', { d: 'M-12,22 C-14,4 -8,-4 0,-4 C8,-4 14,4 12,22 Z', class: 'robber-body' }));
       g.append(S('circle', { cx: 0, cy: -12, r: 10, class: 'robber-body' }));
       g.append(S('rect', { x: -7, y: -15, width: 14, height: 4, rx: 2, fill: '#e53935' }));
+      svg.append(g);
+    }
+
+    // pirate (Seafarers): a dark boat on its sea tile
+    if (bd.pirate !== undefined && bd.pirate >= 0 && !st.config.rules.noRobber && bd.sea[bd.pirate]) {
+      const t = bd.sea[bd.pirate]!;
+      const g = S('g', { class: 'pirate', transform: `translate(${t.x * U},${t.y * U})` });
+      g.append(S('ellipse', { cx: 0, cy: 14, rx: 20, ry: 5, fill: 'rgba(0,0,0,.35)' }));
+      g.append(S('path', { d: 'M-18,6 L18,6 L12,16 L-12,16 Z', fill: '#1b1b1f', stroke: '#000', 'stroke-width': 1 }));
+      g.append(S('line', { x1: 0, y1: 6, x2: 0, y2: -18, stroke: '#000', 'stroke-width': 2 }));
+      g.append(S('path', { d: 'M1,-17 L16,-8 L1,-2 Z', fill: '#111' }));
       svg.append(g);
     }
 

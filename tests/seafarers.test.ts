@@ -316,3 +316,267 @@ test('Road Building in seafarers accepts a mix of roads and ships', () => {
   expect(s.phase).toBe('main');
   expect(s.players[0]!.res.wood).toBe(wood);
 });
+
+// ---- wave 3: move ship, pirate, gold choice ----
+/** player 0 owns a settlement and two ships going out of it (the far one is open); turn 5 so the ships are old */
+function fleet(seed = 5) {
+  const s = mainState(seed);
+  s.turn = 5;
+  const { v, path } = shipWalk(s, 3);
+  s.buildings[v] = { owner: 0, type: 'settlement' };
+  s.ships![path[0]!] = { owner: 0, built: 1 };
+  s.ships![path[1]!] = { owner: 0, built: 1 };
+  s.players[0]!.shipsLeft = 13;
+  return { s, v, path };
+}
+
+test('open ships only: the ship attached to the own settlement is closed', () => {
+  const { s, path } = fleet();
+  expect(G.movableShips(s, 0)).toEqual([path[1]!]);
+  expect(G.applyAction(s, { type: 'moveShip', pid: 0, from: path[0]!, to: path[2]! }).ok).toBe(false);
+  // a building of the own at the far end closes it too
+  const far = s.board.edges[path[1]!]!;
+  const end = shared(s, path[0]!, path[1]!) === far.a ? far.b : far.a;
+  s.buildings[end] = { owner: 0, type: 'settlement' };
+  expect(G.movableShips(s, 0)).toEqual([]);
+});
+
+test('moveShip relocates, keeps built, once per turn; reset next turn', () => {
+  const { s, path } = fleet();
+  const dest = G.shipDestinations(s, 0, path[1]!);
+  expect(dest.length).toBeGreaterThan(0);
+  expect(dest.includes(path[1]!)).toBe(false);
+  const to = dest[0]!;
+  expect(G.applyAction(s, { type: 'moveShip', pid: 0, from: path[1]!, to }).ok).toBe(true);
+  expect(s.ships![path[1]!]).toBeUndefined();
+  expect(s.ships![to]).toEqual({ owner: 0, built: 1 });
+  expect(s.shipMoved).toBe(true);
+  expect(s.players[0]!.shipsLeft).toBe(13);
+  expect(s.log.some(l => l.msg.includes('dời một chiếc tàu'))).toBe(true);
+  expect(G.movableShips(s, 0)).toEqual([]);
+  expect(G.applyAction(s, { type: 'moveShip', pid: 0, from: to, to: path[1]! }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'endTurn', pid: 0 }).ok).toBe(true);
+  expect(s.shipMoved).toBe(false);
+});
+
+test('a ship built this turn cannot be moved; only in main phase by the current player', () => {
+  const { s, path } = fleet();
+  s.ships![path[1]!]!.built = s.turn;
+  expect(G.movableShips(s, 0)).toEqual([]);
+  s.ships![path[1]!]!.built = 1;
+  const to = G.shipDestinations(s, 0, path[1]!)[0]!;
+  expect(G.applyAction(s, { type: 'moveShip', pid: 1, from: path[1]!, to }).ok).toBe(false);
+  s.phase = 'roll';
+  expect(G.applyAction(s, { type: 'moveShip', pid: 0, from: path[1]!, to }).ok).toBe(false);
+});
+
+/** a sea tile with ship edges, and its ship edges */
+function seaWithEdges(s: GameState, atLeast = 3) {
+  for (const t of s.board.sea) {
+    const edges = s.board.edges.filter(E => E.sea?.includes(t.id!) && isShipEdge(s.board, E));
+    if (edges.length >= atLeast) return { t, edges };
+  }
+  throw new Error('no sea tile');
+}
+
+test('pirate blocks building and moving ships on its hex only', () => {
+  const { s, path } = fleet();
+  const E = s.board.edges[path[2]!]!;
+  expect(G.canBuildShip(s, 0, path[2]!)).toBe(true);
+  s.board.pirate = E.sea![0]!;
+  expect(G.canBuildShip(s, 0, path[2]!)).toBe(false);
+  expect(G.legalShips(s, 0).includes(path[2]!)).toBe(false);
+  expect(G.applyAction(s, { type: 'build', pid: 0, what: 'ship', at: path[2]! }).ok).toBe(false);
+  for (const d of G.shipDestinations(s, 0, path[1]!)) expect(s.board.edges[d]!.sea!.includes(s.board.pirate)).toBe(false);
+  // the open ship on a pirate edge cannot be moved
+  s.board.pirate = s.board.edges[path[1]!]!.sea![0]!;
+  expect(G.movableShips(s, 0).includes(path[1]!)).toBe(false);
+  s.board.pirate = -1;
+  expect(G.canBuildShip(s, 0, path[2]!)).toBe(true);
+});
+
+test('pirate steals only from ship owners on its hex, not from coastal settlements', () => {
+  const s = mainState(5, 3);
+  const { t, edges } = seaWithEdges(s);
+  s.ships![edges[0]!.id] = { owner: 1, built: 0 };
+  const coast = t.verts!.find(v => s.board.vertices[v]!.hexes.length > 0 && v !== edges[0]!.a && v !== edges[0]!.b && !s.buildings[v]);
+  expect(coast).toBeDefined();
+  s.buildings[coast!] = { owner: 2, type: 'settlement' };
+  for (const pid of [1, 2]) s.players[pid]!.res = { wood: 2, brick: 0, sheep: 0, wheat: 0, ore: 0 };
+  expect(G.pirateVictims(s, 0, t.id!)).toEqual([1]);
+  s.phase = 'robber';
+  s.robberReturn = 'main';
+  const robber = s.board.robber;
+  const before = G.handSize(s.players[0]!.res);
+  expect(G.applyAction(s, { type: 'moveRobber', pid: 0, tile: t.id!, victim: 2, target: 'pirate' }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'moveRobber', pid: 0, tile: t.id!, target: 'pirate' }).ok).toBe(true);
+  expect(s.board.pirate).toBe(t.id);
+  expect(s.board.robber).toBe(robber);
+  expect(G.handSize(s.players[0]!.res)).toBe(before + 1);
+  expect(s.players[1]!.res.wood).toBe(1);
+  expect(s.players[2]!.res.wood).toBe(2);
+  expect(s.phase).toBe('main');
+  expect(s.fx.some(f => f.kind === 'pirate')).toBe(true);
+});
+
+test('pirate tile must be a sea tile other than the current one', () => {
+  const s = mainState(5, 3);
+  s.phase = 'robber';
+  s.board.pirate = 2;
+  const legal = G.legalPirateTiles(s, 0);
+  expect(legal.includes(2)).toBe(false);
+  expect(legal.length).toBe(s.board.sea.length - 1);
+  expect(G.applyAction(s, { type: 'moveRobber', pid: 0, tile: 2, target: 'pirate' }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'moveRobber', pid: 0, tile: s.board.sea.length + 5, target: 'pirate' }).ok).toBe(false);
+});
+
+test('Knight card: either the robber or the pirate may be moved', () => {
+  for (const target of ['robber', 'pirate'] as const) {
+    const s = mainState(5, 3);
+    s.turn = 5;
+    s.players[0]!.dev.push({ type: 'knight', turn: 1 });
+    expect(G.applyAction(s, { type: 'playDev', pid: 0, card: 'knight' }).ok).toBe(true);
+    expect(s.phase).toBe('robber');
+    const robber = s.board.robber;
+    if (target === 'pirate') {
+      const tile = G.legalPirateTiles(s, 0)[0]!;
+      expect(G.applyAction(s, { type: 'moveRobber', pid: 0, tile, target }).ok).toBe(true);
+      expect(s.board.pirate).toBe(tile);
+      expect(s.board.robber).toBe(robber);
+    } else {
+      const tile = G.legalRobberTiles(s, 0)[0]!;
+      expect(G.applyAction(s, { type: 'moveRobber', pid: 0, tile }).ok).toBe(true);
+      expect(s.board.robber).toBe(tile);
+      expect(s.board.pirate).toBe(-1);
+    }
+    expect(s.phase).toBe('main');
+  }
+});
+
+test('friendly robber protects ships from the pirate', () => {
+  const s = mainState(5, 3);
+  s.config.rules.friendlyRobber = true;
+  const { t, edges } = seaWithEdges(s);
+  s.ships![edges[0]!.id] = { owner: 1, built: 0 };
+  s.buildings[edges[0]!.a] = { owner: 1, type: 'settlement' };
+  s.players[1]!.res.wood = 3;
+  expect(G.legalPirateTiles(s, 0).includes(t.id!)).toBe(false);
+  expect(G.pirateTargets(s, 0, t.id!)).toEqual([]);
+});
+
+/** a state where the next roll pays the gold tile: owner 0 has a settlement on it, owner 1 a city */
+function goldState(bank?: Partial<Record<string, number>>) {
+  const c = cfg('islands', 5, true, 3);
+  c.map.gold = 2;
+  const s = G.createGame(c);
+  s.phase = 'roll';
+  s.current = 0;
+  s.setup.blindActive = false;
+  const gold = s.board.tiles.find(t => t.res === 'gold')!;
+  const free = gold.verts.filter(v => !s.buildings[v]);
+  s.buildings[free[0]!] = { owner: 0, type: 'settlement' };
+  s.buildings[free[2]!] = { owner: 1, type: 'city' };
+  if (bank) for (const r of Object.keys(s.bank)) (s.bank as unknown as Record<string, number>)[r] = bank[r] ?? 0;
+  s.board.robber = s.board.tiles.find(t => t.res === 'desert')?.id ?? -1;
+  // find a rng state where the roll is not a 7, then make the gold tile pay on exactly that number
+  for (let k = 0; k < 50; k++) {
+    const probe = structuredClone(s);
+    G.applyAction(probe, { type: 'roll', pid: 0 });
+    const sum = probe.dice![0] + probe.dice![1];
+    if (sum !== 7) {
+      gold.num = sum;
+      for (const t of s.board.tiles) if (t.id !== gold.id && t.num === sum) t.num = sum === 12 ? 2 : sum + 1;
+      G.applyAction(s, { type: 'roll', pid: 0 });
+      return s;
+    }
+    s.rng.s = (s.rng.s + 12345) | 0;
+  }
+  throw new Error('no roll');
+}
+
+test('gold: roll pays pending (settlement 1, city 2) and opens the gold phase', () => {
+  const s = goldState();
+  expect(s.phase).toBe('gold');
+  expect(s.goldPending).toEqual({ 0: 1, 1: 2 });
+  expect(G.pendingActors(s).sort()).toEqual([0, 1]);
+  const hand0 = G.handSize(s.players[0]!.res);
+  // exact count only, cards from the bank
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 0, res: { ore: 2 } }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 0, res: {} }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 2, res: { ore: 1 } }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'build', pid: 0, what: 'road', at: 0 }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 0, res: { ore: 1 } }).ok).toBe(true);
+  expect(G.handSize(s.players[0]!.res)).toBe(hand0 + 1);
+  expect(s.phase).toBe('gold');
+  expect(G.pendingActors(s)).toEqual([1]);
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 1, res: { wood: 1, brick: 1 } }).ok).toBe(true);
+  expect(s.phase).toBe('main');
+  expect(s.goldPending).toEqual({});
+});
+
+test('gold: empty bank limits the choice and ends the phase', () => {
+  const s = goldState({ ore: 1 });
+  expect(s.phase).toBe('gold');
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 0, res: { wheat: 1 } }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 1, res: { ore: 2 } }).ok).toBe(false);
+  expect(G.applyAction(s, { type: 'chooseGold', pid: 1, res: { ore: 1 } }).ok).toBe(true);
+  // the bank is dry: player 0 gets nothing and the phase ends
+  expect(s.phase).toBe('main');
+  expect(s.goldPending).toEqual({});
+});
+
+test('gold: retiring during the gold phase drops the pending pick', () => {
+  const s = goldState();
+  G.applyAction(s, { type: 'retirePlayer', pid: 1 });
+  expect(s.goldPending).toEqual({ 0: 1 });
+  expect(s.phase).toBe('gold');
+  const s2 = goldState();
+  G.applyAction(s2, { type: 'retirePlayer', pid: 0 }); // the current player leaves: the turn passes on
+  expect(s2.phase).toBe('roll');
+  expect(s2.goldPending).toEqual({});
+  const s3 = goldState();
+  delete s3.goldPending![0];
+  G.applyAction(s3, { type: 'retirePlayer', pid: 1 });
+  expect(s3.phase).toBe('main');
+});
+
+test('base game has no pirate, shipMoved or goldPending anywhere', () => {
+  const s = G.createGame(cfg('classic', 3, false));
+  for (let i = 0; i < 120 && s.phase !== 'gameOver'; i++) {
+    const pid = G.pendingActors(s)[0]!;
+    const a = botAct(s, pid);
+    if (!a || !G.applyAction(s, a).ok) break;
+  }
+  expect('shipMoved' in s || 'goldPending' in s || 'pirate' in s.board || 'pirateFrom' in s.board).toBe(false);
+  expect(G.legalPirateTiles(s, 0)).toEqual([]);
+  expect(G.movableShips(s, 0)).toEqual([]);
+});
+
+test('bot-vs-bot seafarers with gold: games finish, gold and pirate get used', () => {
+  let goldPicks = 0;
+  let pirateMoves = 0;
+  for (const seed of [11, 12, 13, 14]) {
+    const c = cfg('islands', seed, true, 3 + (seed % 2));
+    c.map.gold = 3;
+    const s = G.createGame(c);
+    let guard = 0;
+    while (s.phase !== 'gameOver' && s.turn < 1500 && ++guard < 200000) {
+      let acted = false;
+      for (const pid of G.pendingActors(s)) {
+        const a = botAct(s, pid);
+        if (!a) continue;
+        if (a.type === 'chooseGold') goldPicks++;
+        if (a.type === 'moveRobber' && a.target === 'pirate') pirateMoves++;
+        const r = G.applyAction(s, a);
+        if (!r.ok) throw new Error(r.error);
+        shipInvariants(s);
+        acted = true;
+        break;
+      }
+      if (!acted) break;
+    }
+    expect(s.phase).toBe('gameOver');
+  }
+  expect(goldPicks).toBeGreaterThan(0);
+  console.log('gold picks', goldPicks, 'pirate moves', pirateMoves);
+});

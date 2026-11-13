@@ -90,6 +90,10 @@ export interface Board {
   robber: number;
   /** where the robber was before its last move (set after the first move) */
   robberFrom?: number;
+  /** Seafarers only: sea tile id the pirate sits on, -1 = not on the board yet */
+  pirate?: number;
+  /** where the pirate was before its last move */
+  pirateFrom?: number;
 }
 
 // ---------- config ----------
@@ -199,7 +203,7 @@ export interface Rng {
 }
 
 // ---------- game state ----------
-export type Phase = 'setup' | 'roll' | 'main' | 'discard' | 'robber' | 'roadBuilding' | 'specialBuild' | 'gameOver';
+export type Phase = 'setup' | 'roll' | 'main' | 'discard' | 'gold' | 'robber' | 'roadBuilding' | 'specialBuild' | 'gameOver';
 
 export interface Building {
   owner: number;
@@ -307,6 +311,10 @@ export interface GameState {
   roads: Record<string, number>;
   /** Seafarers only: ships by edge id (`built` = turn it was built) */
   ships?: Record<string, { owner: number; built: number }>;
+  /** Seafarers only: a ship was already moved this turn */
+  shipMoved?: boolean;
+  /** Seafarers only: gold-tile cards each player still has to choose (phase 'gold') */
+  goldPending?: Record<string, number>;
   blind: BlindPlacement[];
   bank: Hand;
   bankTotal: number;
@@ -364,7 +372,9 @@ export type Action =
   | { type: 'placeShip'; pid: number; eid: number }
   | { type: 'roll'; pid: number; power?: number }
   | { type: 'discard'; pid: number; res: Partial<Hand> }
-  | { type: 'moveRobber'; pid: number; tile: number; victim?: number | null }
+  | { type: 'moveRobber'; pid: number; tile: number; victim?: number | null; target?: 'robber' | 'pirate' }
+  | { type: 'moveShip'; pid: number; from: number; to: number }
+  | { type: 'chooseGold'; pid: number; res: Partial<Hand> }
   | { type: 'build'; pid: number; what: BuildKind; at: number }
   | { type: 'endRoadBuilding'; pid: number }
   | { type: 'buyDev'; pid: number }
@@ -401,6 +411,8 @@ export type Fx =
   | { kind: 'dice'; dice: [number, number]; power: number }
   | { kind: 'discard'; pid: number; res: Hand }
   | { kind: 'robber'; tile: number }
+  | { kind: 'pirate'; tile: number }
+  | { kind: 'shipMoved'; pid: number; from: number; to: number }
   | { kind: 'steal'; from: number; to: number; res: Res | null }
   | { kind: 'devBought'; pid: number; type: DevType }
   | { kind: 'devPlayed'; pid: number; card: DevType }

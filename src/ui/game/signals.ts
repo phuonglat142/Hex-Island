@@ -58,14 +58,17 @@ type ModalSpec =
   | { kind: 'trade' }
   | { kind: 'menu' }
   | { kind: 'gameOver' }
-  | { kind: 'victims'; tile: number; v: number; victims: number[] }
+  | { kind: 'victims'; tile: number; v: number; victims: number[]; target?: 'robber' | 'pirate' }
   | { kind: 'monopoly'; v: number }
   | { kind: 'yop'; v: number }
   | { kind: 'counter'; v: number; tradeId: number };
 
 export const modal = signal<ModalSpec | null>(null);
 /** the build button armed on the toolbar (road / ship / settlement / city), picked on the board next */
-export const pick = signal<BuildKind | null>(null);
+export type PickKind = BuildKind | 'moveShip';
+export const pick = signal<PickKind | null>(null);
+/** Seafarers: the ship picked to be moved (null = choosing which ship) */
+export const moveFrom = signal<number | null>(null);
 /** hot-seat: whose turn the privacy screen was unlocked for */
 export const unlockedFor = signal<number | null>(null);
 /** bumped when presence / vote / reconnect state of the online table changes */
@@ -97,7 +100,7 @@ function computeViewer(st: GameState, prev: number, actors: number[]): number {
   const humans = localHumans(st);
   if (!humans.length) return -1;
   const mine = actors.filter(p => humans.includes(p));
-  if (st.phase === 'discard' && mine.length) return mine.includes(prev) ? prev : mine[0]!;
+  if ((st.phase === 'discard' || st.phase === 'gold') && mine.length) return mine.includes(prev) ? prev : mine[0]!;
   if (st.phase === 'specialBuild' && mine.length) return mine[0]!; // the seat building out of turn
   if (mine.includes(st.current)) return st.current;
   if (st.phase === 'setup' && mine.length) return mine[0]!;
@@ -152,15 +155,15 @@ export const legalSettlements = legal(G.legalSettlements);
 export const legalCities = legal(G.legalCities);
 
 // ---------- board interaction ----------
-function robberPick(v: number, tile: number): void {
+function robberPick(v: number, tile: number, target?: 'pirate'): void {
   const st = state.peek();
   if (!st) return;
-  const victims = G.stealTargets(G.viewFor(st, v), v, tile);
+  const victims = target ? G.pirateTargets(st, v, tile) : G.stealTargets(G.viewFor(st, v), v, tile);
   if (victims.length <= 1) {
-    App.dispatch({ type: 'moveRobber', pid: v, tile, victim: victims[0] });
+    App.dispatch({ type: 'moveRobber', pid: v, tile, victim: victims[0], ...(target ? { target } : {}) });
     return;
   }
-  modal.value = { kind: 'victims', tile, v, victims };
+  modal.value = { kind: 'victims', tile, v, victims, target };
 }
 
 export const inter = computed<Interaction | null>(() => {
@@ -179,7 +182,7 @@ export const inter = computed<Interaction | null>(() => {
   }
   if (st.phase === 'specialBuild') {
     const w = pick.value;
-    if (G.sbpActor(st) !== v || !w) return null;
+    if (G.sbpActor(st) !== v || !w || w === 'moveShip') return null;
     const list = w === 'road' ? legalRoads.value : w === 'ship' ? legalShips.value : w === 'settlement' ? legalSettlements.value : legalCities.value;
     return mk(w, list, at => {
       if (App.dispatch({ type: 'build', pid: v, what: w, at })) {
@@ -189,14 +192,30 @@ export const inter = computed<Interaction | null>(() => {
     });
   }
   if (st.current !== v) return null;
-  if (st.phase === 'robber') return mk('robber', G.legalRobberTiles(g, v), tile => robberPick(v, tile));
+  if (st.phase === 'robber') {
+    const it = mk('robber', G.legalRobberTiles(g, v), tile => robberPick(v, tile));
+    if (st.board.pirate !== undefined) {
+      it.sea = G.legalPirateTiles(g, v);
+      it.onPickSea = tile => robberPick(v, tile, 'pirate');
+    }
+    return it;
+  }
   if (st.phase === 'roadBuilding') {
     // Seafarers: the free pieces may be roads or ships; the toolbar toggle picks which
     if (pick.value === 'ship' && legalShips.value.length) return mk('ship', legalShips.value, at => App.dispatch({ type: 'build', pid: v, what: 'ship', at }));
     return mk('road', legalRoads.value, at => App.dispatch({ type: 'build', pid: v, what: 'road', at }));
   }
   const what = pick.value;
-  if (st.phase === 'main' && what) {
+  if (st.phase === 'main' && what === 'moveShip') {
+    const from = moveFrom.value;
+    if (from === null) return mk('ship', G.movableShips(g, v), e => { moveFrom.value = e; });
+    return mk('ship', G.shipDestinations(g, v, from), to => {
+      pick.value = null;
+      moveFrom.value = null;
+      App.dispatch({ type: 'moveShip', pid: v, from, to });
+    });
+  }
+  if (st.phase === 'main' && what && what !== 'moveShip') {
     const list = what === 'road' ? legalRoads.value : what === 'ship' ? legalShips.value : what === 'settlement' ? legalSettlements.value : legalCities.value;
     return mk(what, list, at => {
       if (App.dispatch({ type: 'build', pid: v, what, at })) {
@@ -210,7 +229,7 @@ export const inter = computed<Interaction | null>(() => {
 
 // ---------- texts ----------
 export const PHASE_TEXT: Record<string, string> = {
-  setup: 'Đặt nhà đầu ván', roll: 'Tung xúc xắc', main: 'Xây dựng và giao dịch', discard: 'Bỏ thẻ',
+  setup: 'Đặt nhà đầu ván', roll: 'Tung xúc xắc', main: 'Xây dựng và giao dịch', discard: 'Bỏ thẻ', gold: 'Chọn tài nguyên từ mỏ vàng',
   robber: 'Di chuyển kẻ trộm', roadBuilding: 'Xây đường miễn phí', specialBuild: 'Pha xây đặc biệt', gameOver: 'Kết thúc ván',
 };
 export const costIcons = (c: Partial<Record<string, number>>): string =>
@@ -229,15 +248,20 @@ function bannerText(st: GameState, v: number, interKind: string | undefined): st
     const n = Object.keys(st.pendingDiscards).length;
     return `🗑️ Ra 7! Đang bỏ thẻ (còn ${n} người)`;
   }
+  if (st.phase === 'gold') {
+    const n = Object.keys(st.goldPending || {}).length;
+    return `🪙 Mỏ vàng! Đang chọn tài nguyên (còn ${n} người)`;
+  }
   if (st.phase === 'specialBuild') {
     const b = G.sbpActor(st);
     if (b === v) return interKind ? ({ road: 'Chọn chỗ làm đường (Esc để hủy)', ship: 'Chọn chỗ đóng tàu (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '' : '🔨 Pha xây đặc biệt: bạn được xây hoặc mua thẻ';
     return `🔨 ${b != null ? st.players[b]!.name : ''} đang xây chen lượt`;
   }
   if (st.current !== v) return st.trade ? `🤝 ${cur.name} mời giao dịch` : `Lượt của ${cur.name}`;
-  if (st.phase === 'robber') return '🦹 Chọn chỗ đặt kẻ trộm';
+  if (st.phase === 'robber') return st.board.pirate !== undefined ? '🦹 Chọn ô đất đặt kẻ trộm hoặc ô biển đặt hải tặc' : '🦹 Chọn chỗ đặt kẻ trộm';
   if (st.phase === 'roadBuilding') return `🛤️ Đặt ${st.freeRoads} ${st.ships ? 'đường hoặc tàu' : 'đoạn đường'} miễn phí`;
   if (st.phase === 'roll') return '🎲 Tới lượt bạn! Tung xúc xắc đi';
+  if (interKind === 'ship' && pick.value === 'moveShip') return moveFrom.value === null ? 'Chọn chiếc tàu muốn dời (Esc để hủy)' : 'Chọn chỗ mới cho tàu (Esc để hủy)';
   if (interKind) return ({ road: 'Chọn chỗ làm đường (Esc để hủy)', ship: 'Chọn chỗ đóng tàu (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '';
   return '';
 }

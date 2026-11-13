@@ -173,6 +173,17 @@ describe('host <-> guest over an in-memory connection', () => {
     expect(r.seen).toBeGreaterThan(80);
   }, 60000);
 
+  test('seafarers game (ships, pirate, gold): guest state stays equal to the redacted host state', async () => {
+    const r = await play(setup(c => { c.rules.expansion = 'seafarers'; c.map.shape = 'islands'; c.map.gold = 2; }), 400);
+    expect(r.seen).toBeGreaterThan(150);
+    const g = r.guestState();
+    const h = r.hostState();
+    expect(g.ships).toEqual(h.ships);
+    expect(g.board.pirate).toBe(h.board.pirate);
+    expect(g.goldPending).toEqual(h.goldPending);
+    expect(Object.keys(g.ships || {}).length).toBeGreaterThan(0);
+  }, 120000);
+
   test('invalid / cheating messages are ignored or refused', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = await play(setup(() => {}), 6);

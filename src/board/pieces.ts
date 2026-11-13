@@ -200,7 +200,10 @@ function hashStr(s: string): number {
   return h;
 }
 
-type Spec = PieceSpec | { kind: 'robber'; key: string; sig: string; tile: { id: number; x: number; y: number } };
+type Spec =
+  | PieceSpec
+  | { kind: 'robber'; key: string; sig: string; tile: { id: number; x: number; y: number } }
+  | { kind: 'pirate'; key: string; sig: string; tile: { x: number; y: number } };
 interface Rec {
   sig: string;
   owned: boolean;
@@ -254,6 +257,10 @@ export class PieceSet {
     );
     if (robberOn) next.set('robber' + rt!.id, { kind: 'robber', key: 'robber' + rt!.id, sig: '', tile: rt! });
 
+    // Seafarers: the pirate is a dark boat on a sea tile (it never touches robberTile: that is the robber's stain)
+    const pt = bd.pirate !== undefined && bd.pirate >= 0 && !st.config.rules.noRobber ? bd.sea[bd.pirate] : undefined;
+    if (pt) next.set('pirate', { kind: 'pirate', key: 'pirate', sig: String(bd.pirate), tile: pt });
+
     // new terrain (other heights) = every piece moves: rebuild them all in place, without drop-in animations
     const reset = this.heightKey !== b.staticKey || this.heightField !== b.field;
     const known = new Set(this.recs.keys());
@@ -281,6 +288,7 @@ export class PieceSet {
       case 'joint': return this.createJoint(spec, st, vy, spawn);
       case 'building': return this.createBuilding(spec, st, vy, spawn);
       case 'robber': return this.createRobber(spec, spawn);
+      case 'pirate': return this.createPirate(spec, spawn);
     }
   }
 
@@ -421,6 +429,14 @@ export class PieceSet {
     this.addObject(s, o, undefined, spawn);
   }
 
+  private createPirate(s: Extract<Spec, { kind: 'pirate' }>, spawn: boolean) {
+    const o = tinted(this.board.kit.boat, { Cloth: '#15151a' });
+    o.position.set(s.tile.x, 0, s.tile.y);
+    o.rotation.y = 0.6;
+    o.scale.setScalar(1.6);
+    this.addObject(s, o, undefined, spawn);
+  }
+
   // ---- click hotspots (CSS2D buttons): their own group, rebuilt only when the pick spots change.
   // Recreating them on every state update swaps the button under the finger and the click gets lost.
   private syncHotspots(st: BState, view: BoardViewState, vy: (v: number) => number, force: boolean) {
@@ -431,14 +447,15 @@ export class PieceSet {
     this.hotKey = key;
     disposeChildren(this.hot);
     if (!inter) return;
-    const mk = (id: number, x: number, y: number, z: number, cls: string) => {
+    const mk = (id: number, x: number, y: number, z: number, cls: string, sea = false) => {
       const el = document.createElement('button');
       el.className = 'hot3d ' + cls;
       el.style.setProperty('--pc', inter.color || '#fff');
       el.addEventListener('pointerdown', e => e.stopPropagation());
       el.addEventListener('click', e => {
         e.stopPropagation();
-        if (board.inter) board.inter.onPick(id);
+        if (sea) board.inter?.onPickSea?.(id);
+        else board.inter?.onPick(id);
       });
       const o = new CSS2DObject(el);
       o.position.set(x, y, z);
@@ -466,6 +483,11 @@ export class PieceSet {
       for (const id of inter.legal) {
         const t = bd.tiles[id]!;
         mk(id, t.x + 0.3, Math.max(board.heightAt(t.x, t.y), 0.3) + 0.3, t.y - 0.25, 't');
+      }
+    if (inter.kind === 'robber')
+      for (const id of inter.sea || []) {
+        const t = bd.sea[id]!;
+        mk(id, t.x, 0.4, t.y, 't', true);
       }
   }
 }

@@ -21,6 +21,8 @@ export interface BBoard {
   bounds: BBounds;
   robber: number;
   robberHidden?: boolean;
+  /** Seafarers: sea tile id, -1 = not on the board */
+  pirate?: number;
 }
 export type BPlayer = Pick<Player, 'color'> & Partial<Pick<Player, 'name' | 'flag'>>;
 export interface BBuilding {
@@ -48,6 +50,9 @@ export interface Interaction {
   color?: string;
   legal: Iterable<number>;
   onPick: (id: number) => void;
+  /** robber phase in Seafarers: sea tiles the pirate may go to (ids in `board.sea`) */
+  sea?: Iterable<number>;
+  onPickSea?: (id: number) => void;
 }
 export interface BlindPiece {
   pid: number;

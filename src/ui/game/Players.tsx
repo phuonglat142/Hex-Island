@@ -28,6 +28,7 @@ function cardData(pid: number) {
     hand: G.handSize(p.res), dev: p.dev.length, knights: p.knights, road: p.roadLen,
     roadAward: st.longestRoad.owner === pid, armyAward: st.largestArmy.owner === pid,
     discard: st.pendingDiscards[pid] || 0,
+    gold: st.goldPending?.[pid] || 0,
     gain: gains.value.filter(g => g.pid === pid).map(g => g.text).join(' '),
   };
 }
@@ -52,6 +53,7 @@ function PlayerCard({ pid }: { pid: number }): JSX.Element {
         <span title="Đường dài nhất của bạn">{px(`🛣️ ${d.road}`, 15)}</span>
         {d.roadAward && <span class="award" title="Con đường dài nhất (+2)">{px('🏅Đường', 15)}</span>}
         {d.armyAward && <span class="award" title="Đội quân lớn nhất (+2)">{px('🏅Quân đội', 15)}</span>}
+        {d.gold > 0 && <span style={{ color: 'var(--gold, #d4a017)' }}>{px(`🪙 ${d.gold}`, 15)}</span>}
         {d.discard > 0 && <span style={{ color: 'var(--red)' }}>{px(`🗑️ ${d.discard}`, 15)}</span>}
       </div>
       {d.gain && <div class="gainfx" key={d.gain}>{px(d.gain, 17)}</div>}

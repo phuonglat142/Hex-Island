@@ -29,7 +29,8 @@ const T = 18; // sprite size inside buttons
 type Forced =
   | { kind: 'reconnect' }
   | { kind: 'vote'; id: string; name: string; left: number; voters: number; cast: number; mine: string | null; counts: Record<string, number> }
-  | { kind: 'discard'; v: number; need: number };
+  | { kind: 'discard'; v: number; need: number }
+  | { kind: 'gold'; v: number; need: number };
 
 const forced = select<Forced | null>(() => {
   const st = cur();
@@ -50,6 +51,8 @@ const forced = select<Forced | null>(() => {
   const v = seat.value;
   const need = st.pendingDiscards[v];
   if (st.phase === 'discard' && need && localHumans(st).includes(v)) return { kind: 'discard', v, need };
+  const gold = st.goldPending?.[v];
+  if (st.phase === 'gold' && gold && localHumans(st).includes(v)) return { kind: 'gold', v, need: Math.min(gold, RES.reduce((a, r) => a + st.bank[r], 0)) };
   return null;
 }, jsonEq);
 
@@ -107,6 +110,26 @@ function DiscardModal({ v, need }: { v: number; need: number }): JSX.Element {
         <div class="row">
           <span class="pill">{`${n} / ${need}`}</span>
           <Button variant="primary" disabled={n !== need} onClick={() => void App.dispatch({ type: 'discard', pid: v, res: { ...d } })}>Bỏ thẻ</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function GoldModal({ v, need }: { v: number; need: number }): JSX.Element {
+  const [d, setD] = useState<Hand>(zeroHand);
+  const st = cur()!;
+  const p = st.players[v]!;
+  const n = G.handSize(d);
+  return (
+    <Modal onClose={noop}>
+      <div>
+        <h2>{px(`🪙 ${p.name}: chọn ${need} tài nguyên`, 28)}</h2>
+        <p>Mỏ vàng cho bạn tự chọn tài nguyên từ ngân hàng (được chọn trùng).</p>
+        <div class="steppers">{RES.map(r => <Stepper r={r} n={d[r]} max={Math.min(st.bank[r], need)} onChange={x => setD({ ...d, [r]: x })} />)}</div>
+        <div class="row">
+          <span class="pill">{`${n} / ${need}`}</span>
+          <Button variant="primary" disabled={n !== need} onClick={() => void App.dispatch({ type: 'chooseGold', pid: v, res: { ...d } })}>Lấy</Button>
         </div>
       </div>
     </Modal>
@@ -269,7 +292,7 @@ function YearOfPlentyModal({ v }: { v: number }): JSX.Element {
   );
 }
 
-function VictimsModal({ tile, v, victims }: { tile: number; v: number; victims: number[] }): JSX.Element {
+function VictimsModal({ tile, v, victims, target }: { tile: number; v: number; victims: number[]; target?: 'robber' | 'pirate' }): JSX.Element {
   const st = cur()!;
   return (
     <Modal onClose={closeModal}>
@@ -278,7 +301,7 @@ function VictimsModal({ tile, v, victims }: { tile: number; v: number; victims: 
         {victims.map(pid => {
           const p = st.players[pid]!;
           return (
-            <Button style={{ borderColor: p.color }} onClick={() => { closeModal(); App.dispatch({ type: 'moveRobber', pid: v, tile, victim: pid }); }}>
+            <Button style={{ borderColor: p.color }} onClick={() => { closeModal(); App.dispatch({ type: 'moveRobber', pid: v, tile, victim: pid, ...(target ? { target } : {}) }); }}>
               <span class="turn-dot" style={{ background: p.color }} />{`${p.name} (${G.handSize(p.res)} thẻ)`}
             </Button>
           );
@@ -400,6 +423,7 @@ export function ModalHost(): JSX.Element | null {
   if (f) {
     if (f.kind === 'reconnect') return <ReconnectModal key="reconnect" />;
     if (f.kind === 'vote') return <VoteModal key={'vote' + f.id} f={f} />;
+    if (f.kind === 'gold') return <GoldModal key={'gold' + f.v} v={f.v} need={f.need} />;
     return <DiscardModal key={'discard' + f.v} v={f.v} need={f.need} />;
   }
   const m = modal.value;
@@ -409,7 +433,7 @@ export function ModalHost(): JSX.Element | null {
     case 'counter': return <CounterModal key="counter" v={m.v} tradeId={m.tradeId} />;
     case 'menu': return <MenuModal key="menu" />;
     case 'gameOver': return <GameOverModal key="gameOver" />;
-    case 'victims': return <VictimsModal key="victims" tile={m.tile} v={m.v} victims={m.victims} />;
+    case 'victims': return <VictimsModal key="victims" tile={m.tile} v={m.v} victims={m.victims} target={m.target} />;
     case 'monopoly': return <MonopolyModal key="monopoly" v={m.v} />;
     case 'yop': return <YearOfPlentyModal key="yop" v={m.v} />;
   }

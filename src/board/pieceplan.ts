@@ -83,7 +83,7 @@ export function diffPlan(prev: ReadonlyMap<string, string>, next: ReadonlyMap<st
 }
 
 /** Key of the click hotspots: they are rebuilt only when this changes (a rebuild under a finger loses the click). */
-export function interKey(inter: { kind: string; color?: string; legal: Iterable<number> } | null | undefined): string {
+export function interKey(inter: { kind: string; color?: string; legal: Iterable<number>; sea?: Iterable<number> } | null | undefined): string {
   if (!inter) return '';
-  return inter.kind + '|' + (inter.color || '') + '|' + [...inter.legal].sort((a, b) => a - b).join(',');
+  return inter.kind + '|' + (inter.color || '') + '|' + [...inter.legal].sort((a, b) => a - b).join(',') + (inter.sea ? '|s' + [...inter.sea].sort((a, b) => a - b).join(',') : '');
 }

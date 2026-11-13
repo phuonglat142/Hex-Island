@@ -6,7 +6,7 @@ import type { BuildKind, DevType } from '@engine/types';
 import { App, store } from '@app/index';
 import { PixelIcon, px } from '@ui/components/PixelIcon';
 import { play } from '@ui/sfx';
-import { cur, countRender, costIcons, jsonEq, legalCities, gv, legalRoads, legalSettlements, legalShips, locked, modal, pick, seat, select } from './signals';
+import { cur, countRender, costIcons, jsonEq, legalCities, gv, legalRoads, legalSettlements, legalShips, locked, modal, moveFrom, pick, seat, select, type PickKind } from './signals';
 import { playDev, showHint, throwDice } from './actions';
 
 // ---------------- the dice button: tap to throw, hold to charge a harder throw ----------------
@@ -145,12 +145,13 @@ type ActModel =
   | { k: 'none' }
   | { k: 'over' }
   | { k: 'discard'; n: number }
+  | { k: 'gold'; n: number }
   | { k: 'wait'; text: string; afford: AffordItem[] | null }
   | { k: 'roll'; v: number }
   | { k: 'robber' }
   | { k: 'roads'; ships: boolean; on: boolean }
   | { k: 'setupShip'; on: boolean }
-  | { k: 'main' | 'sbp'; v: number; pick: BuildKind | null; road: [boolean, number]; ship: [boolean, number] | null; settlement: [boolean, number]; city: [boolean, number]; dev: boolean; tradeBusy: boolean };
+  | { k: 'main' | 'sbp'; v: number; pick: PickKind | null; moveShip: boolean; road: [boolean, number]; ship: [boolean, number] | null; settlement: [boolean, number]; city: [boolean, number]; dev: boolean; tradeBusy: boolean };
 
 const missing = (res: Record<string, number>, cost: Partial<Record<string, number>>): string =>
   Object.entries(cost).filter(([r, n]) => (res[r] || 0) < (n || 0)).map(([r, n]) => TILE_INFO[r as keyof typeof TILE_INFO].icon.repeat((n || 0) - (res[r] || 0))).join('');
@@ -164,6 +165,11 @@ const actModel = select<ActModel>(() => {
   const sbp = st.phase === 'specialBuild';
   const myTurn = sbp ? G.sbpActor(st) === v : st.current === v;
   if (st.phase === 'gameOver') return { k: 'over' };
+  if (st.phase === 'gold') {
+    if (st.goldPending?.[v]) return { k: 'gold', n: st.goldPending[v]! };
+    const first = G.pendingActors(st)[0];
+    return { k: 'wait', text: `⏳ Đang chờ ${first != null ? st.players[first]!.name : ''}...`, afford: null };
+  }
   if (st.phase === 'setup' || !myTurn) {
     const need = st.pendingDiscards[v];
     if (st.phase === 'discard' && need) return { k: 'discard', n: need };
@@ -197,6 +203,7 @@ const actModel = select<ActModel>(() => {
   const can = (what: BuildKind, left: number, legal: number[]): [boolean, number] => [left > 0 && G.canAfford(p.res, COSTS[what]) && legal.length > 0, left];
   return {
     k: sbp ? 'sbp' : 'main', v, pick: pick.value,
+    moveShip: !sbp && !!st.ships && G.movableShips(gv.value!, v).length > 0,
     road: can('road', p.roadsLeft, legalRoads.value),
     ship: st.ships ? can('ship', p.shipsLeft ?? 0, legalShips.value) : null,
     settlement: can('settlement', p.settlementsLeft, legalSettlements.value),
@@ -232,6 +239,7 @@ function Actions(): JSX.Element {
             </div>
           ) : null,
         ];
+      case 'gold': return <button type="button" class="btn pink" onClick={() => {}}>{px(`🪙 Chọn ${m.n} tài nguyên`, 18)}</button>;
       case 'roll': return <RollButton v={m.v} />;
       case 'robber': return <div class="waiting">{px('🦹 Chạm vào một ô trên bàn cờ', 18)}</div>;
       case 'setupShip':
@@ -257,6 +265,7 @@ function Actions(): JSX.Element {
               </button>
             );
           }),
+          m.moveShip ? <button type="button" class={'btn' + (m.pick === 'moveShip' ? ' active' : '')} title="Dời một tàu ở đầu mở (1 lần mỗi lượt)" onClick={e => { e.stopPropagation(); moveFrom.value = null; pick.value = pick.peek() === 'moveShip' ? null : 'moveShip'; }}>{px('⛵ Dời tàu', 18)}</button> : null,
           <button type="button" class="btn" disabled={!m.dev} title={`Thẻ phát triển — giá ${costIcons(COSTS.dev)}`} onClick={() => void App.dispatch({ type: 'buyDev', pid: m.v })}>
             <span class="bicon"><PixelIcon emoji="🃏" size={28} /></span>
             <span>Thẻ<span class="cost">{px(costIcons(COSTS.dev), 14)}</span></span>
