@@ -5,7 +5,7 @@ import type { ComponentChildren, JSX } from 'preact';
 import { App } from '@app/index';
 import { BoardView } from '@board/BoardView';
 import { defaultConfig, expansionOf, MODES, PRESETS, PLAYER_COLORS, BOT_NAMES } from '@engine/config';
-import { SHAPES, generateBoard } from '@engine/board';
+import { SHAPES, generateBoard, seaMapSize } from '@engine/board';
 import { DEV_DECKS, TILE_INFO } from '@engine/constants';
 import { createGame } from '@engine/game';
 import { newSeed } from '@engine/rng';
@@ -19,8 +19,33 @@ import { myKingdom, patternFlag, saveMyKingdom, validFlag } from '@ui/flag/flag'
 
 // modes that only make sense on the base board (the engine forces them off in Seafarers)
 const HIDDEN_MODES = ['flipped', 'fog', 'blindfold', 'hiddenNumbers'];
-// maps usable in Seafarers (dedicated shapes come later)
-const SEA_SHAPES: ShapeId[] = ['islands'];
+// maps usable in Seafarers (the first one is the default)
+const SEA_SHAPES: ShapeId[] = ['seaIslands', 'mainland', 'islands'];
+const isSeaOnly = (k: ShapeId): boolean => !!SHAPES[k]?.sea;
+// presets that force a shape or a hidden-information mode make no sense on the sea board
+const SEA_BAD_PRESETS = ['blind', 'fog', 'explorer', 'paranoia', 'chaos'];
+
+/** Official FAQ for free-form Seafarers maps: terrain hexes (no deserts) / 2. */
+function suggestVp(cfg: LCfg): number {
+  const players = cfg.players.length >= 2 ? cfg.players : [...cfg.players, ...cfg.players];
+  const b = generateBoard({ ...cfg, players } as unknown as Config, { s: cfg.seed >>> 0 || 12345 });
+  const land = b.tiles.filter(t => t.res !== 'desert').length;
+  return Math.max(10, Math.min(16, Math.round(land / 2)));
+}
+
+/** Pick a map shape; in Seafarers also set the defaults that go with it (gold, size, island bonus, VP). */
+function applyShape(cfg: LCfg, k: ShapeId, sea: boolean): void {
+  cfg.map.shape = k;
+  cfg.map.custom = null;
+  cfg.seed = newSeed();
+  if (!sea) return;
+  if (isSeaOnly(k)) {
+    cfg.map.gold = 2;
+    cfg.map.size = seaMapSize(k, cfg.players.length);
+    cfg.rules.islandBonus = true;
+  } else cfg.rules.islandBonus = false;
+  cfg.rules.vpTarget = suggestVp(cfg);
+}
 
 const CFG_KEY = 'katanittes.lastConfig';
 export const MAPS_KEY = 'katanittes.maps';
@@ -60,7 +85,12 @@ function loadConfig(): LCfg {
   const base = defaultConfig() as unknown as LCfg;
   if (!saved) return base;
   // merge so new options always exist
-  return { ...base, ...saved, map: { ...base.map, ...saved.map }, rules: { ...base.rules, ...saved.rules }, modes: { ...base.modes, ...saved.modes }, seed: newSeed() } as LCfg;
+  const merged = { ...base, ...saved, map: { ...base.map, ...saved.map }, rules: { ...base.rules, ...saved.rules }, modes: { ...base.modes, ...saved.modes }, seed: newSeed() } as LCfg;
+  // a Seafarers-only map without Seafarers (or a map Seafarers cannot play) falls back
+  const seaOn = merged.rules.expansion === 'seafarers';
+  if (!seaOn && isSeaOnly(merged.map.shape)) merged.map.shape = 'classic';
+  if (seaOn && !SEA_SHAPES.includes(merged.map.shape)) merged.map.shape = SEA_SHAPES[0]!;
+  return merged;
 }
 
 function initCfg(opts: LobbyArg): LCfg {
@@ -402,11 +432,17 @@ export function Lobby({ arg }: { arg?: LobbyArg }): JSX.Element {
             <div class="card">
               <h3>{px('⚡ Chơi nhanh ', 22)}<small>áp dụng một bộ cài sẵn</small></h3>
               <div class="chips">
-                {PRESETS.map(p => (
+                {PRESETS.filter(p => !(sea && SEA_BAD_PRESETS.includes(p.id))).map(p => (
                   <button key={p.id} class="chip" title={p.desc} onClick={() => {
                     const c = defaultConfig() as unknown as LCfg;
                     c.players = cfg.players;
                     p.apply(c as unknown as Config);
+                    if (sea) {
+                      // the preset starts from a base config: keep the expansion and the map the player chose
+                      c.rules.expansion = 'seafarers';
+                      c.map = { ...cfg.map };
+                      c.rules.islandBonus = cfg.rules.islandBonus;
+                    }
                     setCfg(c);
                     toast(`${p.icon} ${p.name}: ${p.desc}`);
                   }}>{px(`${p.icon} ${p.name}`, 16)}</button>
@@ -423,21 +459,36 @@ export function Lobby({ arg }: { arg?: LobbyArg }): JSX.Element {
                     if (v === 'seafarers') {
                       cfg.rules.expansion = 'seafarers';
                       cfg.modes.flipped = cfg.modes.fog = cfg.modes.blindfold = cfg.modes.hiddenNumbers = false;
-                      if (!SEA_SHAPES.includes(m.shape)) { m.shape = SEA_SHAPES[0]!; m.custom = null; }
-                    } else delete cfg.rules.expansion;
+                      applyShape(cfg, SEA_SHAPES.includes(m.shape) && m.shape !== 'islands' ? m.shape : SEA_SHAPES[0]!, true);
+                    } else {
+                      delete cfg.rules.expansion;
+                      delete cfg.rules.islandBonus;
+                      if (isSeaOnly(m.shape)) { m.shape = 'classic'; m.size = 24; m.gold = 0; }
+                      cfg.rules.vpTarget = 10;
+                    }
                     cfg.seed = newSeed();
                     refresh();
                   }} />
                 </div>
               </div>
               <p style={{ color: 'var(--muted)', fontSize: '12px', display: sea ? '' : 'none' }}>{px('🌊 Biển cả: vành biển rộng hơn để mở rộng ra khơi. Các chế độ ẩn thông tin bị tắt.', 14)}</p>
+              {sea && (
+                <div class="modes">
+                  <div class={'mode' + (cfg.rules.islandBonus ? ' on' : '')} role="switch" aria-checked={!!cfg.rules.islandBonus}
+                    onClick={() => { cfg.rules.islandBonus = !cfg.rules.islandBonus; refresh(); }}>
+                    <div class="mi">{px('🏝️', 30)}</div>
+                    <div><b>Thưởng đảo mới</b><small>+2 điểm cho nhà đầu tiên của mỗi người trên một đảo khác với các đảo họ đã đặt nhà lúc đầu ván.</small></div>
+                    <div class="switch" />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div class="card">
               <h3>{px('🗺️ Bản đồ', 22)}</h3>
               <div class="maps">
-                {(Object.entries(SHAPES) as Array<[ShapeId, (typeof SHAPES)[ShapeId]]>).filter(([k]) => k !== 'custom' && (!sea || SEA_SHAPES.includes(k))).map(([k, sh]) => (
-                  <div key={k} class={'map-card' + (m.shape === k ? ' on' : '')} title={sh.desc} onClick={() => { m.shape = k; m.custom = null; cfg.seed = newSeed(); refresh(); }}>
+                {(Object.entries(SHAPES) as Array<[ShapeId, (typeof SHAPES)[ShapeId]]>).filter(([k]) => k !== 'custom' && (sea ? SEA_SHAPES.includes(k) : !isSeaOnly(k))).map(([k, sh]) => (
+                  <div key={k} class={'map-card' + (m.shape === k ? ' on' : '')} title={sh.desc} onClick={() => { applyShape(cfg, k, sea); refresh(); }}>
                     <div class="mini"><MiniSvg mini={miniMap(k)} /></div><b>{sh.name}</b>
                   </div>
                 ))}

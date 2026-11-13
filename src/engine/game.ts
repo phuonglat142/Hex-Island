@@ -203,6 +203,22 @@ export function viewFor(s: GameState, pid: number | null | undefined): GameView 
   return { ...s, buildings, roads, board: { ...bd, tiles, robberHidden: !robberSeen }, vision: vis };
 }
 
+/** Seafarers: 2 VP per foreign island (not one of the setup islands) where the player has a building */
+export function islandBonusVP(s: GameState, pid: number): number {
+  const home = s.islandBonus?.[pid];
+  if (!home) return 0;
+  const seen = new Set<number>();
+  for (const k in s.buildings) {
+    const b = s.buildings[k]!;
+    if (b.owner !== pid) continue;
+    for (const h of s.board.vertices[+k]!.hexes) {
+      const i = s.board.tiles[h]!.island;
+      if (i !== undefined && !home.includes(i)) seen.add(i);
+    }
+  }
+  return 2 * seen.size;
+}
+
 export function victoryPoints(s: GameState, pid: number, hidden = true): number {
   let vp = 0;
   for (const k in s.buildings) {
@@ -211,6 +227,7 @@ export function victoryPoints(s: GameState, pid: number, hidden = true): number 
   }
   if (s.longestRoad.owner === pid) vp += 2;
   if (s.largestArmy.owner === pid) vp += 2;
+  vp += islandBonusVP(s, pid);
   if (hidden) vp += s.players[pid]!.dev.filter(c => c.type === 'vp').length;
   return vp;
 }
@@ -243,6 +260,8 @@ function vertexOpen(s: GameState, v: number): boolean {
 
 export function canSetupSettlement(s: GameState, pid: number, v: number): boolean {
   if (!s.board.vertices[v] || s.board.vertices[v]!.hexes.length === 0) return false;
+  const home = s.board.homeIslands;
+  if (home && !s.board.vertices[v]!.hexes.some(h => home.includes(s.board.tiles[h]!.island ?? -1))) return false;
   if (s.setup.blindActive) {
     const { verts } = ownBlind(s, pid);
     if (verts.has(v)) return false;
@@ -953,6 +972,13 @@ H.placeSettlement = (s, a) => {
     log(s, isCity ? `🙈 @${a.pid} đã bí mật đặt thành phố.` : `🙈 @${a.pid} đã bí mật đặt nhà.`, a.pid);
   } else {
     s.buildings[a.vid] = { owner: a.pid, type };
+    if (s.config.rules.islandBonus && expansionOf(s.config) === 'seafarers') {
+      const home = ((s.islandBonus = s.islandBonus || {})[a.pid] = s.islandBonus[a.pid] || []);
+      for (const h of s.board.vertices[a.vid]!.hexes) {
+        const i = s.board.tiles[h]!.island;
+        if (i !== undefined && !home.includes(i)) home.push(i);
+      }
+    }
     revealAround(s, a.vid);
     if (entry.round === st.lastRound) {
       // face-down board: resources would give away what's underneath, pay them on the flip
