@@ -2,7 +2,7 @@
 // mutated only through applyAction(). No DOM access here: it runs in Node for tests.
 import { RES, COSTS, DEV_DECKS, EVENTS, DEV_INFO, isRes, resEntries } from './constants';
 import { randInt, shuffle, pick } from './rng';
-import { generateBoard } from './board';
+import { generateBoard, isShipEdge } from './board';
 import { expansionOf } from './config';
 import type {
   Action, ActionOf, ActionType, ApplyResult, BlindPlacement, Config, DevType, Discovered, GameEvent, GameState,
@@ -100,6 +100,10 @@ export function createGame(configIn: Config): GameState {
     rollLog: [],
     actions: 0,
   };
+  if (expansionOf(config) === 'seafarers') {
+    s.ships = {};
+    for (const p of s.players) p.shipsLeft = R.maxShips ?? 15;
+  }
   s.devDeck = buildDevDeck(config, n, rng);
   s.devTotal = s.devDeck.length;
 
@@ -248,12 +252,33 @@ function canSetupRoad(s: GameState, pid: number, e: number): boolean {
   const E = s.board.edges[e];
   if (!E || E.hexes.length === 0 || (E.a !== s.setup.lastVid && E.b !== s.setup.lastVid)) return false;
   if (s.setup.blindActive) return !ownBlind(s, pid).edges.has(e);
-  return s.roads[e] === undefined;
+  return s.roads[e] === undefined && !s.ships?.[e];
+}
+
+// Seafarers: in setup a coastal settlement may get a ship instead of a road.
+function canSetupShip(s: GameState, pid: number, e: number): boolean {
+  const E = s.board.edges[e];
+  if (!s.ships || !E || !isShipEdge(s.board, E) || (E.a !== s.setup.lastVid && E.b !== s.setup.lastVid)) return false;
+  return s.roads[e] === undefined && !s.ships[e] && (s.players[pid]!.shipsLeft ?? 0) > 0;
+}
+
+// A ship connects to the player's own building, or to the player's own ship at a vertex free of opponent buildings.
+// Ships never connect to roads directly.
+export function canBuildShip(s: GameState, pid: number, e: number): boolean {
+  const E = s.board.edges[e];
+  if (!s.ships || !E || !isShipEdge(s.board, E) || s.roads[e] !== undefined || s.ships[e]) return false;
+  for (const v of [E.a, E.b]) {
+    const b = s.buildings[v];
+    if (b && b.owner === pid) return true;
+    if (b) continue;
+    if (s.board.vertices[v]!.edges.some(x => x !== e && s.ships![x]?.owner === pid)) return true;
+  }
+  return false;
 }
 
 export function canBuildRoad(s: GameState, pid: number, e: number): boolean {
   const E = s.board.edges[e];
-  if (!E || E.hexes.length === 0 || s.roads[e] !== undefined) return false;
+  if (!E || E.hexes.length === 0 || s.roads[e] !== undefined || s.ships?.[e]) return false;
   for (const v of [E.a, E.b]) {
     const b = s.buildings[v];
     if (b && b.owner === pid) return true;
@@ -265,7 +290,7 @@ export function canBuildRoad(s: GameState, pid: number, e: number): boolean {
 
 function canBuildSettlement(s: GameState, pid: number, v: number): boolean {
   if (!s.board.vertices[v] || !vertexOpen(s, v)) return false;
-  return s.board.vertices[v]!.edges.some(e => s.roads[e] === pid);
+  return s.board.vertices[v]!.edges.some(e => s.roads[e] === pid || s.ships?.[e]?.owner === pid);
 }
 
 const canBuildCity = (s: GameState, pid: number, v: number): boolean => {
@@ -279,6 +304,18 @@ export function legalSetupSettlements(s: GameState, pid: number): number[] {
 export function legalSetupRoads(s: GameState, pid: number): number[] {
   const v = s.setup.lastVid === null ? undefined : s.board.vertices[s.setup.lastVid];
   return v ? v.edges.filter((e: number) => canSetupRoad(s, pid, e)) : [];
+}
+export function legalSetupShips(s: GameState, pid: number): number[] {
+  const v = s.setup.lastVid === null ? undefined : s.board.vertices[s.setup.lastVid];
+  return v ? v.edges.filter((e: number) => canSetupShip(s, pid, e)) : [];
+}
+export function legalShips(s: GameState, pid: number): number[] {
+  if (!s.ships || (s.players[pid]!.shipsLeft ?? 0) <= 0) return [];
+  return s.board.edges.filter(e => canBuildShip(s, pid, e.id)).map(e => e.id);
+}
+/** Road Building: is there any road or ship the player can still place for free? */
+export function canFreePiece(s: GameState, pid: number): boolean {
+  return (s.players[pid]!.roadsLeft > 0 && legalRoads(s, pid).length > 0) || legalShips(s, pid).length > 0;
 }
 export function legalRoads(s: GameState, pid: number): number[] {
   return s.board.edges.filter(e => canBuildRoad(s, pid, e.id)).map(e => e.id);
@@ -380,8 +417,13 @@ function revealAround(s: GameState, v: number) {
 
 function roadLength(s: GameState, pid: number): number {
   const bd = s.board;
+  const ships = s.ships;
   const starts = new Set<number>();
   for (const k in s.roads) if (s.roads[k] === pid) {
+    starts.add(bd.edges[+k]!.a);
+    starts.add(bd.edges[+k]!.b);
+  }
+  if (ships) for (const k in ships) if (ships[k]!.owner === pid) {
     starts.add(bd.edges[+k]!.a);
     starts.add(bd.edges[+k]!.b);
   }
@@ -392,18 +434,22 @@ function roadLength(s: GameState, pid: number): number {
     const b = s.buildings[v];
     return !!b && b.owner !== pid;
   };
-  const dfs = (v: number, len: number): void => {
+  // kind of the previous piece: 0 none, 1 road, 2 ship. Changing kind needs the player's own building on the vertex.
+  const dfs = (v: number, len: number, last: number): void => {
     if (len > best) best = len;
     if (len > 0 && blocked(v)) return;
+    const own = s.buildings[v]?.owner === pid;
     for (const e of bd.vertices[v]!.edges) {
-      if (s.roads[e] !== pid || used.has(e)) continue;
+      if (used.has(e)) continue;
+      const kind = s.roads[e] === pid ? 1 : ships?.[e]?.owner === pid ? 2 : 0;
+      if (!kind || (last && kind !== last && !own)) continue;
       used.add(e);
       const E = bd.edges[e]!;
-      dfs(E.a === v ? E.b : E.a, len + 1);
+      dfs(E.a === v ? E.b : E.a, len + 1, kind);
       used.delete(e);
     }
   };
-  for (const v of starts) dfs(v, 0);
+  for (const v of starts) dfs(v, 0, 0);
   return best;
 }
 
@@ -419,9 +465,9 @@ function updateLongestRoad(s: GameState) {
   }
   if (owner !== cur) {
     if (owner >= 0) {
-      log(s, `🛣️ @${owner} giành Con đường dài nhất (${max}).`, owner);
+      log(s, `🛣️ @${owner} giành ${s.ships ? 'Tuyến đường' : 'Con đường'} dài nhất (${max}).`, owner);
       s.fx.push({ kind: 'award', what: 'road', pid: owner });
-    } else log(s, '🛣️ Giờ không ai giữ Con đường dài nhất.');
+    } else log(s, `🛣️ Giờ không ai giữ ${s.ships ? 'Tuyến đường' : 'Con đường'} dài nhất.`);
   }
   s.longestRoad = { owner, len: owner >= 0 ? lens[owner]! : 0 };
 }
@@ -850,6 +896,22 @@ H.placeRoad = (s, a) => {
   else advanceSetup(s);
 };
 
+H.placeShip = (s, a) => {
+  if (s.phase !== 'setup' || s.setup.step !== 'road') fail('Chưa phải lúc đặt đường.');
+  const st = s.setup;
+  if (st.queue[st.idx]!.pid !== a.pid) fail('Chưa tới lượt bạn.');
+  if (!s.ships) fail('Ván này không có tàu.');
+  if (!canSetupShip(s, a.pid, a.eid)) fail('Tàu phải đi ra từ nhà ven biển bạn vừa đặt.');
+  const p = s.players[a.pid]!;
+  p.shipsLeft = (p.shipsLeft ?? 0) - 1;
+  s.ships[a.eid] = { owner: a.pid, built: s.turn };
+  s.fx.push({ kind: 'build', what: 'ship', pid: a.pid, at: a.eid });
+  log(s, `⛵ @${a.pid} đặt một chiếc tàu.`, a.pid);
+  updateLongestRoad(s);
+  if (st.fixing) nextFixOrBegin(s);
+  else advanceSetup(s);
+};
+
 H.roll = (s, a) => {
   if (s.phase !== 'roll') fail('Giờ chưa phải lúc tung xúc xắc.');
   if (a.pid !== s.current) fail('Chưa tới lượt bạn.');
@@ -941,7 +1003,7 @@ H.build = (s, a) => {
   const sb = s.phase === 'specialBuild';
   if (sb ? a.pid !== sbpActor(s) : a.pid !== s.current) fail('Chưa tới lượt bạn.');
   const p = s.players[a.pid]!;
-  const free = s.phase === 'roadBuilding' && a.what === 'road';
+  const free = s.phase === 'roadBuilding' && (a.what === 'road' || a.what === 'ship');
   if (!free && !sb) assertMain(s, a);
   if (a.what === 'road') {
     if (p.roadsLeft <= 0) fail('Bạn hết đường rồi.');
@@ -957,7 +1019,20 @@ H.build = (s, a) => {
     log(s, free ? `🛤️ @${a.pid} làm một đoạn đường miễn phí.` : `🛤️ @${a.pid} làm một đoạn đường.`, a.pid);
     if (free) {
       s.freeRoads--;
-      if (s.freeRoads <= 0 || p.roadsLeft <= 0 || !legalRoads(s, a.pid).length) s.phase = s.roadReturn || 'main';
+      if (s.freeRoads <= 0 || !canFreePiece(s, a.pid)) s.phase = s.roadReturn || 'main';
+    }
+  } else if (a.what === 'ship') {
+    if (!s.ships) fail('Ván này không có tàu.');
+    if ((p.shipsLeft ?? 0) <= 0) fail('Bạn hết tàu rồi.');
+    if (!canBuildShip(s, a.pid, a.at)) fail('Tàu phải nối với nhà hoặc tàu của bạn.');
+    if (!free && !canAfford(p.res, COSTS.ship)) fail('Bạn không đủ tài nguyên.');
+    if (!free) pay(s, a.pid, COSTS.ship);
+    p.shipsLeft = (p.shipsLeft ?? 0) - 1;
+    s.ships[a.at] = { owner: a.pid, built: s.turn };
+    log(s, free ? `⛵ @${a.pid} đóng một chiếc tàu miễn phí.` : `⛵ @${a.pid} đóng một chiếc tàu.`, a.pid);
+    if (free) {
+      s.freeRoads--;
+      if (s.freeRoads <= 0 || !canFreePiece(s, a.pid)) s.phase = s.roadReturn || 'main';
     }
   } else if (a.what === 'settlement') {
     if (p.settlementsLeft <= 0) fail('Bạn hết nhà rồi.');
@@ -1030,9 +1105,9 @@ H.playDev = (s, a) => {
       s.phase = 'robber';
       break;
     case 'roadBuilding':
-      s.freeRoads = Math.min(2, p.roadsLeft);
+      s.freeRoads = Math.min(2, p.roadsLeft + (s.ships ? p.shipsLeft ?? 0 : 0));
       s.roadReturn = s.phase === 'roll' ? 'roll' : 'main'; // played before rolling: the roll still comes after
-      if (s.freeRoads > 0 && legalRoads(s, a.pid).length) s.phase = 'roadBuilding';
+      if (s.freeRoads > 0 && canFreePiece(s, a.pid)) s.phase = 'roadBuilding';
       break;
     case 'yearOfPlenty':
       for (const r of a.res) giveFromBank(s, a.pid, r, 1);

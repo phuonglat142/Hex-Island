@@ -8,7 +8,7 @@ export type Hand = Record<Res, number>;
 export type TileKind = Res | 'desert' | 'gold';
 export type DevType = 'knight' | 'vp' | 'roadBuilding' | 'yearOfPlenty' | 'monopoly';
 export type DevDeckId = 'normal' | 'war' | 'progress' | 'none';
-export type BuildKind = 'road' | 'settlement' | 'city';
+export type BuildKind = 'road' | 'ship' | 'settlement' | 'city';
 export type EventId =
   | 'bonanza' | 'drought' | 'fairTrade' | 'blackMarket' | 'earthquake' | 'storm'
   | 'gift' | 'plague' | 'tax' | 'rebellion' | 'calm';
@@ -147,6 +147,8 @@ export interface Rules {
   devDeck: DevDeckId;
   diceMode: 'random' | 'balanced';
   maxRoads: number;
+  /** Seafarers only; missing means 15 */
+  maxShips?: number;
   maxSettlements: number;
   maxCities: number;
   randomStart: boolean;
@@ -222,6 +224,8 @@ export interface Player {
   knights: number;
   roadLen: number;
   roadsLeft: number;
+  /** Seafarers only */
+  shipsLeft?: number;
   settlementsLeft: number;
   citiesLeft: number;
   stats: { gained: number; stolen: number; lost: number };
@@ -301,6 +305,8 @@ export interface GameState {
   players: Player[];
   buildings: Record<string, Building>;
   roads: Record<string, number>;
+  /** Seafarers only: ships by edge id (`built` = turn it was built) */
+  ships?: Record<string, { owner: number; built: number }>;
   blind: BlindPlacement[];
   bank: Hand;
   bankTotal: number;
@@ -355,6 +361,7 @@ export type GameView = GameState & {
 export type Action =
   | { type: 'placeSettlement'; pid: number; vid: number }
   | { type: 'placeRoad'; pid: number; eid: number }
+  | { type: 'placeShip'; pid: number; eid: number }
   | { type: 'roll'; pid: number; power?: number }
   | { type: 'discard'; pid: number; res: Partial<Hand> }
   | { type: 'moveRobber'; pid: number; tile: number; victim?: number | null }

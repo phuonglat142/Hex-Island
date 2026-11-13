@@ -249,6 +249,23 @@ export class BoardView implements BoardRenderer {
     for (const b of view.blindOwn || []) if (b.eid != null) drawRoad(b.eid, st.players[b.pid]!.color, ' ghost');
     svg.append(gRoads);
 
+    // ships (Seafarers): a small boat at the middle of its edge, turned along it
+    const gShips = S('g', { class: 'ships' });
+    for (const k in st.ships) {
+      const E = bd.edges[+k]!;
+      const a = bd.vertices[E.a]!;
+      const c = bd.vertices[E.b]!;
+      const key = 's' + k;
+      const isNew = this.prevPieces.size && !this.prevPieces.has(key);
+      pieces.add(key);
+      const ang = (Math.atan2(c.y - a.y, c.x - a.x) * 180) / Math.PI;
+      const g = S('g', { class: 'piece ship' + (isNew ? ' new' : ''), transform: `translate(${((a.x + c.x) / 2) * U},${((a.y + c.y) / 2) * U}) rotate(${ang})` });
+      g.append(S('polygon', { points: `${-0.3 * U},${-0.07 * U} ${0.3 * U},${-0.07 * U} ${0.2 * U},${0.09 * U} ${-0.2 * U},${0.09 * U}`, fill: '#8a5a2b', stroke: '#2b1b0c', 'stroke-width': 1.5 }));
+      g.append(S('polygon', { points: `${-0.02 * U},${-0.08 * U} ${-0.02 * U},${-0.34 * U} ${0.18 * U},${-0.08 * U}`, fill: st.players[st.ships![+k]!.owner]!.color, stroke: '#2b1b0c', 'stroke-width': 1.5 }));
+      gShips.append(g);
+    }
+    svg.append(gShips);
+
     // buildings
     const gB = S('g', { class: 'buildings' });
     const drawBuilding = (vid: number, owner: number, type: string, extra = '') => {
@@ -299,7 +316,7 @@ export class BoardView implements BoardRenderer {
       }
       svg.append(g);
     }
-    if (inter && inter.kind === 'road') {
+    if (inter && (inter.kind === 'road' || inter.kind === 'ship')) {
       const g = S('g', { class: 'hot' });
       for (const e of legal) {
         const E = bd.edges[e]!;

@@ -65,3 +65,12 @@ test('3D-10: sprite labels on low / medium only; atlas cells fit and do not over
       expect(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y).toBe(true);
     }
 });
+
+test('ships get a spec of their own and no road joints', () => {
+  const inp = { st: { board: { edges }, roads: {}, ships: { 1: { owner: 1 } }, buildings: {}, players } as any, flag: () => '' };
+  const plan = planPieces(inp);
+  expect([...plan.keys()]).toEqual(['s1']);
+  expect(plan.get('s1')).toMatchObject({ kind: 'ship', eid: 1, color: '#00f', sig: '#00f' });
+  inp.st.roads = { 2: 0 };
+  expect([...planPieces(inp).keys()].sort()).toEqual(['j2:0', 'j3:0', 'r2', 's1']);
+});

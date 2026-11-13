@@ -64,7 +64,7 @@ type ModalSpec =
   | { kind: 'counter'; v: number; tradeId: number };
 
 export const modal = signal<ModalSpec | null>(null);
-/** the build button armed on the toolbar (road / settlement / city), picked on the board next */
+/** the build button armed on the toolbar (road / ship / settlement / city), picked on the board next */
 export const pick = signal<BuildKind | null>(null);
 /** hot-seat: whose turn the privacy screen was unlocked for */
 export const unlockedFor = signal<number | null>(null);
@@ -147,6 +147,7 @@ const legal = (fn: (s: GameState, v: number) => number[]) =>
     return g && v >= 0 ? fn(g, v) : [];
   });
 export const legalRoads = legal(G.legalRoads);
+export const legalShips = legal(G.legalShips);
 export const legalSettlements = legal(G.legalSettlements);
 export const legalCities = legal(G.legalCities);
 
@@ -172,12 +173,14 @@ export const inter = computed<Interaction | null>(() => {
   if (st.phase === 'setup') {
     if (actors.value[0] !== v) return null;
     if (st.setup.step === 'settlement') return mk('settlement', G.legalSetupSettlements(g, v), vid => App.dispatch({ type: 'placeSettlement', pid: v, vid }));
+    // Seafarers: a coastal settlement may get a ship instead of a road (the toolbar toggle picks which)
+    if (pick.value === 'ship' && G.legalSetupShips(g, v).length) return mk('ship', G.legalSetupShips(g, v), eid => { pick.value = null; App.dispatch({ type: 'placeShip', pid: v, eid }); });
     return mk('road', G.legalSetupRoads(g, v), eid => App.dispatch({ type: 'placeRoad', pid: v, eid }));
   }
   if (st.phase === 'specialBuild') {
     const w = pick.value;
     if (G.sbpActor(st) !== v || !w) return null;
-    const list = w === 'road' ? legalRoads.value : w === 'settlement' ? legalSettlements.value : legalCities.value;
+    const list = w === 'road' ? legalRoads.value : w === 'ship' ? legalShips.value : w === 'settlement' ? legalSettlements.value : legalCities.value;
     return mk(w, list, at => {
       if (App.dispatch({ type: 'build', pid: v, what: w, at })) {
         const p = state.peek()!.players[v]!;
@@ -187,10 +190,14 @@ export const inter = computed<Interaction | null>(() => {
   }
   if (st.current !== v) return null;
   if (st.phase === 'robber') return mk('robber', G.legalRobberTiles(g, v), tile => robberPick(v, tile));
-  if (st.phase === 'roadBuilding') return mk('road', legalRoads.value, at => App.dispatch({ type: 'build', pid: v, what: 'road', at }));
+  if (st.phase === 'roadBuilding') {
+    // Seafarers: the free pieces may be roads or ships; the toolbar toggle picks which
+    if (pick.value === 'ship' && legalShips.value.length) return mk('ship', legalShips.value, at => App.dispatch({ type: 'build', pid: v, what: 'ship', at }));
+    return mk('road', legalRoads.value, at => App.dispatch({ type: 'build', pid: v, what: 'road', at }));
+  }
   const what = pick.value;
   if (st.phase === 'main' && what) {
-    const list = what === 'road' ? legalRoads.value : what === 'settlement' ? legalSettlements.value : legalCities.value;
+    const list = what === 'road' ? legalRoads.value : what === 'ship' ? legalShips.value : what === 'settlement' ? legalSettlements.value : legalCities.value;
     return mk(what, list, at => {
       if (App.dispatch({ type: 'build', pid: v, what, at })) {
         const p = state.peek()!.players[v]!;
@@ -216,7 +223,7 @@ function bannerText(st: GameState, v: number, interKind: string | undefined): st
     const who = st.players[G.pendingActors(st)[0]!]!;
     const blind = st.setup.blindActive ? '🙈 Bí mật: ' : st.setup.fixing ? '💥 Dời nhà: ' : '';
     if (who.id !== v) return `${blind}${who.name} đang đặt nhà...`;
-    return `${blind}${st.setup.step === 'settlement' ? (st.config.rules.setupCity && st.setup.queue[st.setup.idx]!.round === st.setup.lastRound ? 'Đặt thành phố của bạn' : 'Đặt nhà của bạn') : 'Đặt đường của bạn'}`;
+    return `${blind}${st.setup.step === 'settlement' ? (st.config.rules.setupCity && st.setup.queue[st.setup.idx]!.round === st.setup.lastRound ? 'Đặt thành phố của bạn' : 'Đặt nhà của bạn') : (st.ships ? 'Đặt đường hoặc tàu của bạn' : 'Đặt đường của bạn')}`;
   }
   if (st.phase === 'discard') {
     const n = Object.keys(st.pendingDiscards).length;
@@ -224,14 +231,14 @@ function bannerText(st: GameState, v: number, interKind: string | undefined): st
   }
   if (st.phase === 'specialBuild') {
     const b = G.sbpActor(st);
-    if (b === v) return interKind ? ({ road: 'Chọn chỗ làm đường (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '' : '🔨 Pha xây đặc biệt: bạn được xây hoặc mua thẻ';
+    if (b === v) return interKind ? ({ road: 'Chọn chỗ làm đường (Esc để hủy)', ship: 'Chọn chỗ đóng tàu (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '' : '🔨 Pha xây đặc biệt: bạn được xây hoặc mua thẻ';
     return `🔨 ${b != null ? st.players[b]!.name : ''} đang xây chen lượt`;
   }
   if (st.current !== v) return st.trade ? `🤝 ${cur.name} mời giao dịch` : `Lượt của ${cur.name}`;
   if (st.phase === 'robber') return '🦹 Chọn chỗ đặt kẻ trộm';
-  if (st.phase === 'roadBuilding') return `🛤️ Đặt ${st.freeRoads} đoạn đường miễn phí`;
+  if (st.phase === 'roadBuilding') return `🛤️ Đặt ${st.freeRoads} ${st.ships ? 'đường hoặc tàu' : 'đoạn đường'} miễn phí`;
   if (st.phase === 'roll') return '🎲 Tới lượt bạn! Tung xúc xắc đi';
-  if (interKind) return ({ road: 'Chọn chỗ làm đường (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '';
+  if (interKind) return ({ road: 'Chọn chỗ làm đường (Esc để hủy)', ship: 'Chọn chỗ đóng tàu (Esc để hủy)', settlement: 'Chọn chỗ xây nhà (Esc để hủy)', city: 'Chọn nhà để nâng cấp (Esc để hủy)' } as Record<string, string>)[interKind] || '';
   return '';
 }
 

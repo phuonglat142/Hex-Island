@@ -17,8 +17,9 @@ export const TILE_INFO: Record<TileKind, { name: string; icon: string; color: st
   gold: { name: 'Vàng', icon: '💰', color: '#ffb300', dark: '#b37400' },
 };
 
-export const COSTS: Record<'road' | 'settlement' | 'city' | 'dev', Partial<Hand>> = {
+export const COSTS: Record<'road' | 'ship' | 'settlement' | 'city' | 'dev', Partial<Hand>> = {
   road: { wood: 1, brick: 1 },
+  ship: { wood: 1, sheep: 1 },
   settlement: { wood: 1, brick: 1, sheep: 1, wheat: 1 },
   city: { wheat: 2, ore: 3 },
   dev: { sheep: 1, wheat: 1, ore: 1 },

@@ -31,6 +31,8 @@ export interface BState {
   board: BBoard;
   buildings: Record<number, BBuilding>;
   roads: Record<number, number>;
+  /** Seafarers only */
+  ships?: Record<number, { owner: number }>;
   players: BPlayer[];
   config: { rules: { noRobber?: boolean } };
 }

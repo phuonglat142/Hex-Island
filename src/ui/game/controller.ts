@@ -38,7 +38,7 @@ function paintBoard(): void {
   if (Date.now() - S.pulseAt > 2600) S.pulseTiles.clear();
   let blindOwn: BlindPiece[] = [];
   if (st.phase === 'setup' && st.setup.blindActive) blindOwn = v < 0 ? st.blind : lock ? [] : st.blind.filter(x => x.pid === v);
-  const vst = lock ? { ...g, buildings: {}, roads: {}, vision: { circles: [], caps: [] } } : g;
+  const vst = lock ? { ...g, buildings: {}, roads: {}, ...(g.ships ? { ships: {} } : {}), vision: { circles: [], caps: [] } } : g;
   const flipAt = S.flipPending ? S.flipAt : 0;
   S.flipPending = false;
   untracked(() => b.render(vst, {

@@ -5,11 +5,12 @@ import type { BState, BlindPiece } from './types';
 
 export type PieceSpec =
   | { kind: 'road'; key: string; sig: string; eid: number; color: string; ghost: boolean }
+  | { kind: 'ship'; key: string; sig: string; eid: number; color: string }
   | { kind: 'joint'; key: string; sig: string; vid: number; owner: number; color: string; others: number[] }
   | { kind: 'building'; key: string; sig: string; vid: number; owner: number; type: string; color: string; ghost: boolean };
 
 export interface PlanInput {
-  st: Pick<BState, 'roads' | 'buildings' | 'players'> & { board: { edges: { a: number; b: number }[] } };
+  st: Pick<BState, 'roads' | 'buildings' | 'players'> & Partial<Pick<BState, 'ships'>> & { board: { edges: { a: number; b: number }[] } };
   blindOwn?: BlindPiece[];
   /** identity of a player's flag (any string that changes when the flag does) */
   flag: (pid: number) => string;
@@ -25,6 +26,11 @@ export function planPieces(inp: PlanInput): Map<string, PieceSpec> {
   };
   for (const k in st.roads) road(+k, st.roads[k]!, false);
   for (const b of inp.blindOwn || []) if (b.eid != null) road(b.eid, b.pid, true);
+  // ships (Seafarers) are boats on the water: no road joints for them
+  for (const k in st.ships) {
+    const key = 's' + k;
+    out.set(key, { kind: 'ship', key, sig: color(st.ships![+k]!.owner), eid: +k, color: color(st.ships![+k]!.owner) });
+  }
 
   // road joints: every road end gets an arm that reaches its vertex plus a round cap there. A rival's
   // house cuts the road: no joint under it. One joint per (vertex, owner); its arms are that owner's

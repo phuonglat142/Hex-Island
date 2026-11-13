@@ -6,7 +6,7 @@ import type { BuildKind, DevType } from '@engine/types';
 import { App, store } from '@app/index';
 import { PixelIcon, px } from '@ui/components/PixelIcon';
 import { play } from '@ui/sfx';
-import { cur, countRender, costIcons, jsonEq, legalCities, legalRoads, legalSettlements, locked, modal, pick, seat, select } from './signals';
+import { cur, countRender, costIcons, jsonEq, legalCities, gv, legalRoads, legalSettlements, legalShips, locked, modal, pick, seat, select } from './signals';
 import { playDev, showHint, throwDice } from './actions';
 
 // ---------------- the dice button: tap to throw, hold to charge a harder throw ----------------
@@ -139,7 +139,7 @@ function DevCards(): JSX.Element | null {
 }
 
 // ---------------- the actions ----------------
-interface AffordItem { what: 'road' | 'settlement' | 'city' | 'dev'; icon: string; label: string; ok: boolean; room: boolean; tip: string }
+interface AffordItem { what: 'road' | 'ship' | 'settlement' | 'city' | 'dev'; icon: string; label: string; ok: boolean; room: boolean; tip: string }
 
 type ActModel =
   | { k: 'none' }
@@ -148,13 +148,14 @@ type ActModel =
   | { k: 'wait'; text: string; afford: AffordItem[] | null }
   | { k: 'roll'; v: number }
   | { k: 'robber' }
-  | { k: 'roads' }
-  | { k: 'main' | 'sbp'; v: number; pick: BuildKind | null; road: [boolean, number]; settlement: [boolean, number]; city: [boolean, number]; dev: boolean; tradeBusy: boolean };
+  | { k: 'roads'; ships: boolean; on: boolean }
+  | { k: 'setupShip'; on: boolean }
+  | { k: 'main' | 'sbp'; v: number; pick: BuildKind | null; road: [boolean, number]; ship: [boolean, number] | null; settlement: [boolean, number]; city: [boolean, number]; dev: boolean; tradeBusy: boolean };
 
 const missing = (res: Record<string, number>, cost: Partial<Record<string, number>>): string =>
   Object.entries(cost).filter(([r, n]) => (res[r] || 0) < (n || 0)).map(([r, n]) => TILE_INFO[r as keyof typeof TILE_INFO].icon.repeat((n || 0) - (res[r] || 0))).join('');
 
-const ITEMS: [AffordItem['what'], string, string][] = [['road', '🛤️', 'Đường'], ['settlement', '🏠', 'Nhà'], ['city', '🏰', 'Thành phố'], ['dev', '🃏', 'Thẻ']];
+const ITEMS: [AffordItem['what'], string, string][] = [['road', '🛤️', 'Đường'], ['ship', '⛵', 'Tàu'], ['settlement', '🏠', 'Nhà'], ['city', '🏰', 'Thành phố'], ['dev', '🃏', 'Thẻ']];
 
 const actModel = select<ActModel>(() => {
   const st = cur()!, v = seat.value;
@@ -168,17 +169,21 @@ const actModel = select<ActModel>(() => {
     if (st.phase === 'discard' && need) return { k: 'discard', n: need };
     const first = G.pendingActors(st)[0];
     const text = st.phase === 'setup' && first === v ? '👆 Chạm vào bàn cờ' : `⏳ Đang chờ ${first != null ? st.players[first]!.name : ''}...`;
-    if (st.phase === 'setup') return { k: 'wait', text, afford: null };
+    if (st.phase === 'setup') {
+      if (first === v && st.setup.step === 'road' && st.ships && G.legalSetupShips(gv.value!, v).length) return { k: 'setupShip', on: pick.value === 'ship' };
+      return { k: 'wait', text, afford: null };
+    }
     // out of turn: what your hand already pays for, so you can plan while the others play
     const room: Record<AffordItem['what'], boolean> = {
       road: p.roadsLeft > 0 && legalRoads.value.length > 0,
+      ship: (p.shipsLeft ?? 0) > 0 && legalShips.value.length > 0,
       settlement: p.settlementsLeft > 0 && legalSettlements.value.length > 0,
       city: p.citiesLeft > 0 && legalCities.value.length > 0,
       dev: st.devDeck.length > 0,
     };
     return {
       k: 'wait', text,
-      afford: ITEMS.map(([what, icon, label]) => {
+      afford: ITEMS.filter(([what]) => what !== 'ship' || st.ships).map(([what, icon, label]) => {
         const ok = G.canAfford(p.res, COSTS[what]);
         const tip = ok ? (room[what] ? `Bạn đã đủ tài nguyên: ${label}. Xây vào lượt của bạn nhé.` : `Bạn đủ tiền, nhưng giờ chưa có chỗ: ${label}.`) : `${label}: bạn còn thiếu ${missing(p.res, COSTS[what])}`;
         return { what, icon, label, ok, room: room[what], tip };
@@ -187,12 +192,13 @@ const actModel = select<ActModel>(() => {
   }
   if (st.phase === 'roll') return { k: 'roll', v };
   if (st.phase === 'robber') return { k: 'robber' };
-  if (st.phase === 'roadBuilding') return { k: 'roads' };
+  if (st.phase === 'roadBuilding') return { k: 'roads', ships: !!st.ships && legalShips.value.length > 0, on: pick.value === 'ship' };
   if (st.phase !== 'main' && !sbp) return { k: 'none' };
   const can = (what: BuildKind, left: number, legal: number[]): [boolean, number] => [left > 0 && G.canAfford(p.res, COSTS[what]) && legal.length > 0, left];
   return {
     k: sbp ? 'sbp' : 'main', v, pick: pick.value,
     road: can('road', p.roadsLeft, legalRoads.value),
+    ship: st.ships ? can('ship', p.shipsLeft ?? 0, legalShips.value) : null,
     settlement: can('settlement', p.settlementsLeft, legalSettlements.value),
     city: can('city', p.citiesLeft, legalCities.value),
     dev: st.devDeck.length > 0 && G.canAfford(p.res, COSTS.dev),
@@ -200,7 +206,7 @@ const actModel = select<ActModel>(() => {
   };
 }, jsonEq);
 
-const BUILD: [BuildKind, string, string][] = [['road', 'Đường', '🛤️'], ['settlement', 'Nhà', '🏠'], ['city', 'Thành phố', '🏰']];
+const BUILD: [BuildKind, string, string][] = [['road', 'Đường', '🛤️'], ['ship', 'Tàu', '⛵'], ['settlement', 'Nhà', '🏠'], ['city', 'Thành phố', '🏰']];
 
 function Actions(): JSX.Element {
   countRender('Actions');
@@ -228,12 +234,18 @@ function Actions(): JSX.Element {
         ];
       case 'roll': return <RollButton v={m.v} />;
       case 'robber': return <div class="waiting">{px('🦹 Chạm vào một ô trên bàn cờ', 18)}</div>;
-      case 'roads': return <button type="button" class="btn" onClick={() => void App.dispatch({ type: 'endRoadBuilding', pid: v })}>Xong phần làm đường</button>;
+      case 'setupShip':
+        return <button type="button" class={'btn' + (m.on ? ' active' : '')} title="Đặt tàu thay cho đường" onClick={e => { e.stopPropagation(); pick.value = m.on ? null : 'ship'; }}>{px('⛵ Đặt tàu thay đường', 18)}</button>;
+      case 'roads':
+        return [
+          m.ships ? <button type="button" class={'btn' + (m.on ? ' active' : '')} onClick={e => { e.stopPropagation(); pick.value = m.on ? null : 'ship'; }}>{px('⛵ Tàu', 18)}</button> : null,
+          <button type="button" class="btn" onClick={() => { pick.value = null; void App.dispatch({ type: 'endRoadBuilding', pid: v }); }}>Xong phần làm đường</button>,
+        ];
       case 'main':
       case 'sbp':
         return [
-          ...BUILD.map(([what, label, icon]) => {
-            const [ok, left] = m[what];
+          ...BUILD.filter(([what]) => what !== 'ship' || m.ship).map(([what, label, icon]) => {
+            const [ok, left] = (what === 'ship' ? m.ship : m[what])!;
             return (
               <button
                 type="button" class={'btn' + (m.pick === what ? ' active' : '')} disabled={!ok}

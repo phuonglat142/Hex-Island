@@ -84,7 +84,7 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 const isArr = (v: unknown): v is unknown[] => Array.isArray(v);
 
 const ACTION_TYPES: ReadonlySet<string> = new Set<ActionType>([
-  'placeSettlement', 'placeRoad', 'roll', 'discard', 'moveRobber', 'build', 'endRoadBuilding', 'buyDev', 'playDev',
+  'placeSettlement', 'placeRoad', 'placeShip', 'roll', 'discard', 'moveRobber', 'build', 'endRoadBuilding', 'buyDev', 'playDev',
   'bankTrade', 'proposeTrade', 'respondTrade', 'counterTrade', 'confirmTrade', 'cancelTrade', 'endTurn', 'passBuild', 'setController', 'retirePlayer',
 ]);
 

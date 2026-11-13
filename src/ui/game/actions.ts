@@ -23,7 +23,8 @@ function describe(a: Action | null, st: GameState): string {
   if (!a) return 'Giờ không có gì để làm.';
   switch (a.type) {
     case 'roll': return 'Tung xúc xắc đi.';
-    case 'build': return { road: '🛤️ Làm một đoạn đường (chỗ được tô sáng).', settlement: '🏠 Xây một nhà (chỗ được tô sáng).', city: '🏰 Nâng cấp một nhà lên thành phố.' }[a.what];
+    case 'build': return { road: '🛤️ Làm một đoạn đường (chỗ được tô sáng).', ship: '⛵ Đóng một chiếc tàu (chỗ được tô sáng).', settlement: '🏠 Xây một nhà (chỗ được tô sáng).', city: '🏰 Nâng cấp một nhà lên thành phố.' }[a.what];
+    case 'placeShip': return '⛵ Đặt một chiếc tàu thay cho đường (chỗ được tô sáng).';
     case 'buyDev': return '🃏 Mua một thẻ phát triển.';
     case 'bankTrade': return `🏦 Đổi ${TILE_INFO[a.give].icon} lấy ${TILE_INFO[a.get].icon} với ngân hàng.`;
     case 'proposeTrade': return `🤝 Mời người khác đổi ${resLine(a.give)} lấy ${resLine(a.get)}.`;

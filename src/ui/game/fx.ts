@@ -133,7 +133,7 @@ function handleFx(st: GameState): void {
         S.pulseAt = Date.now();
         break;
       case 'award':
-        toast(rich(f.what === 'road' ? `🛣️ Con đường dài nhất: @${f.pid}` : `⚔️ Đội quân lớn nhất: @${f.pid}`, st.players), 'good');
+        toast(rich(f.what === 'road' ? `🛣️ ${st.ships ? 'Tuyến đường' : 'Con đường'} dài nhất: @${f.pid}` : `⚔️ Đội quân lớn nhất: @${f.pid}`, st.players), 'good');
         break;
       case 'trade':
         flyCards(spread(f.give), f.a, f.b, v);

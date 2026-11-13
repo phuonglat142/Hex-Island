@@ -3,9 +3,10 @@
 import { RES, COSTS, pips, isRes, resEntries } from './constants';
 import {
   canAfford, handSize, victoryPoints, tradeRatio, playableDev, pendingActors,
-  legalSetupSettlements, legalSetupRoads, legalRoads, legalSettlements, legalCities,
+  legalSetupSettlements, legalSetupRoads, legalSetupShips, legalRoads, legalShips, legalSettlements, legalCities,
   legalRobberTiles, stealTargets, zeroRes, viewFor, sbpActor, vpTargetFor,
 } from './game';
+import { isShipEdge } from './board';
 import type { Action, ActionOf, BotLevel, GameState, Hand, Res, Tile, TileKind } from './types';
 
 interface Level {
@@ -124,6 +125,44 @@ function missing(res: Partial<Hand>, cost: Partial<Hand>) {
     }
   }
   return { m, n };
+}
+
+// Seafarers: the legal ship edge that gets closest (over free sea/coast edges) to the best
+// vertex that still can be settled but is not yet reachable. Null when nothing is reachable.
+function bestShip(s: GameState, pid: number): number | null {
+  const cand = legalShips(s, pid);
+  if (!cand.length) return null;
+  const bd = s.board;
+  const prod = production(s, pid);
+  const reach = new Set(legalSettlements(s, pid));
+  const passable = (e: number) => isShipEdge(bd, bd.edges[e]!) && s.roads[e] === undefined && (!s.ships![e] || s.ships![e]!.owner === pid);
+  let pick: number | null = null;
+  let ps = -Infinity;
+  const targets = bd.vertices.filter(v => v.hexes.length > 0 && openFor(s, v.id) && !reach.has(v.id));
+  for (const t of targets) {
+    // BFS outwards from the target over passable edges; stops at the first candidate edge touching the frontier
+    const dist = new Map<number, number>([[t.id, 0]]);
+    const q = [t.id];
+    for (let i = 0; i < q.length; i++) {
+      const v = q[i]!;
+      const d = dist.get(v)!;
+      for (const e of bd.vertices[v]!.edges) {
+        if (!passable(e)) continue;
+        const E = bd.edges[e]!;
+        const u = E.a === v ? E.b : E.a;
+        if (!dist.has(u)) { dist.set(u, d + 1); q.push(u); }
+      }
+    }
+    const sc = vertexScore(s, pid, t.id, prod);
+    for (const e of cand) {
+      const E = bd.edges[e]!;
+      const d = Math.min(dist.get(E.a) ?? Infinity, dist.get(E.b) ?? Infinity);
+      if (!Number.isFinite(d)) continue;
+      const val = sc - d * 3 + noise(s, e) * 0.5;
+      if (val > ps) { ps = val; pick = e; }
+    }
+  }
+  return pick;
 }
 
 function bestRoad(s: GameState, pid: number): number | null {
@@ -247,6 +286,10 @@ function mainAction(s: GameState, pid: number, buildOnly = false): Action | null
   if (spots.length && canAfford(p.res, COSTS.settlement)) {
     const prod = production(s, pid);
     return { type: 'build', pid, what: 'settlement', at: best(spots, v => vertexScore(s, pid, v, prod) + noise(s, v) * L.noise)! };
+  }
+  if (s.ships && !spots.length && p.settlementsLeft > 0 && canAfford(p.res, COSTS.ship)) {
+    const sh = bestShip(s, pid);
+    if (sh !== null) return { type: 'build', pid, what: 'ship', at: sh };
   }
   if (p.roadsLeft > 0 && canAfford(p.res, COSTS.road)) {
     const richInRoad = p.res.wood >= 3 && p.res.brick >= 3;
@@ -383,7 +426,9 @@ export function botAct(real: GameState, pid: number): Action | null {
       return v === null ? null : { type: 'placeSettlement', pid, vid: v };
     }
     const e = setupRoad(s, pid);
-    return e === null ? null : { type: 'placeRoad', pid, eid: e };
+    if (e !== null) return { type: 'placeRoad', pid, eid: e };
+    const sh = legalSetupShips(s, pid)[0];
+    return sh === undefined ? null : { type: 'placeShip', pid, eid: sh };
   }
   if (s.phase === 'specialBuild') return sbpActor(s) === pid ? specialBuild(s, pid) : null;
   if (s.current !== pid) return null;
@@ -398,7 +443,9 @@ export function botAct(real: GameState, pid: number): Action | null {
       const e = bestRoad(s, pid);
       if (e !== null) return { type: 'build', pid, what: 'road', at: e };
       const any = legalRoads(s, pid);
-      return any.length ? { type: 'build', pid, what: 'road', at: any[0]! } : { type: 'endRoadBuilding', pid };
+      if (any.length && s.players[pid]!.roadsLeft > 0) return { type: 'build', pid, what: 'road', at: any[0]! };
+      const sh = bestShip(s, pid) ?? legalShips(s, pid)[0] ?? null;
+      return sh !== null ? { type: 'build', pid, what: 'ship', at: sh } : { type: 'endRoadBuilding', pid };
     }
     case 'main':
       return mainAction(s, pid);

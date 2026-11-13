@@ -277,6 +277,7 @@ export class PieceSet {
   private create(spec: Spec, st: BState, vy: (v: number) => number, spawn: boolean) {
     switch (spec.kind) {
       case 'road': return this.createRoad(spec, st, vy, spawn);
+      case 'ship': return this.createShip(spec, st, vy, spawn);
       case 'joint': return this.createJoint(spec, st, vy, spawn);
       case 'building': return this.createBuilding(spec, st, vy, spawn);
       case 'robber': return this.createRobber(spec, spawn);
@@ -316,6 +317,19 @@ export class PieceSet {
       const m = obj as THREE.Mesh;
       if (m.isMesh) m.material = ghostMat(m.material as THREE.Material);
     });
+  }
+
+  // a ship: the kit's boat with a sail in the owner's colour, lying along its edge on the water
+  private createShip(s: Extract<PieceSpec, { kind: 'ship' }>, st: BState, vy: (v: number) => number, spawn: boolean) {
+    void vy;
+    const E = st.board.edges[s.eid]!;
+    const a = st.board.vertices[E.a]!;
+    const c = st.board.vertices[E.b]!;
+    const o = tinted(this.board.kit.boat, { Cloth: s.color });
+    o.position.set((a.x + c.x) / 2, 0, (a.y + c.y) / 2);
+    o.rotation.y = -Math.atan2(c.y - a.y, c.x - a.x);
+    o.scale.setScalar(1.25);
+    return this.addObject(s, o, s.color, spawn);
   }
 
   private createRoad(s: Extract<PieceSpec, { kind: 'road' }>, st: BState, vy: (v: number) => number, spawn: boolean) {
@@ -441,6 +455,13 @@ export class PieceSet {
         const E = bd.edges[e]!, a = bd.vertices[E.a]!, c = bd.vertices[E.b]!;
         mk(e, (a.x + c.x) / 2, (vy(E.a) + vy(E.b)) / 2 + 0.06, (a.y + c.y) / 2, 'e');
       }
+    else if (inter.kind === 'ship')
+      for (const e of inter.legal) {
+        const E = bd.edges[e]!;
+        const a = bd.vertices[E.a]!;
+        const c = bd.vertices[E.b]!;
+        mk(e, (a.x + c.x) / 2, 0.12, (a.y + c.y) / 2, 'e');
+      }
     else if (inter.kind === 'robber')
       for (const id of inter.legal) {
         const t = bd.tiles[id]!;
@@ -466,7 +487,7 @@ export function pieceWarmup(board: Board3D, maskMats: THREE.Material[]): THREE.G
   };
   const city = tinted(kit.city, colors);
   city.add(banner('', 0, 0, 0.78));
-  g.add(tinted(kit.house, colors), city, ghost(tinted(kit.house, colors)), ghost(tinted(kit.road, colors)), kit.robber.clone());
+  g.add(tinted(kit.boat, { Cloth: color }), tinted(kit.house, colors), city, ghost(tinted(kit.house, colors)), ghost(tinted(kit.road, colors)), kit.robber.clone());
   const inst = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
     const m = new THREE.InstancedMesh(geo, mat, 1);
     m.castShadow = m.receiveShadow = true;
