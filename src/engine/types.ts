@@ -30,6 +30,10 @@ export interface Tile {
 
 /** A decorative sea hex around the land (visual only). */
 export interface SeaTile {
+  /** index in board.sea (Seafarers only) */
+  id?: number;
+  /** vertex ids around this hex (Seafarers only) */
+  verts?: number[];
   q: number;
   r: number;
   x: number;
@@ -44,6 +48,8 @@ export interface Vertex {
   adj: number[];
   edges: number[];
   port: number | null;
+  /** sea hex ids touching this vertex (Seafarers only; `hexes` stays land-only) */
+  sea?: number[];
 }
 
 export interface Edge {
@@ -51,6 +57,8 @@ export interface Edge {
   a: number;
   b: number;
   hexes: number[];
+  /** sea hex ids on this edge (Seafarers only) */
+  sea?: number[];
 }
 
 export interface Port {
@@ -123,7 +131,11 @@ export interface MapConfig {
   custom: CustomMap | null;
 }
 
+export type Expansion = 'base' | 'seafarers';
+
 export interface Rules {
+  /** missing = 'base' */
+  expansion?: Expansion;
   vpTarget: number;
   handLimit: number;
   setupRounds: number;

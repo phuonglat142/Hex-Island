@@ -1,8 +1,13 @@
 import { newSeed } from './rng';
-import type { Config, Mode, Preset } from './types';
+import type { Config, Expansion, Mode, Preset } from './types';
 
 export const PLAYER_COLORS: string[] = ['#e53935', '#1e88e5', '#ff9800', '#f5f5f5', '#43a047', '#8e24aa', '#00acc1', '#795548'];
 export const BOT_NAMES: string[] = ['Cô Tiều', 'Ngài Gạch', 'Ông Ngân Hàng', 'Chú Lúa', 'Bé Cừu', 'Người Đá', 'Bà Đất Sét', 'Trộm Vặt'];
+
+/** Which expansion a config plays. Missing (older saves, net peers) means the base game. */
+export function expansionOf(config: Config): Expansion {
+  return config.rules.expansion === 'seafarers' ? 'seafarers' : 'base';
+}
 
 export function defaultConfig(): Config {
   return {

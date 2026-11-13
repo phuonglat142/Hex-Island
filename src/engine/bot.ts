@@ -4,7 +4,7 @@ import { RES, COSTS, pips, isRes, resEntries } from './constants';
 import {
   canAfford, handSize, victoryPoints, tradeRatio, playableDev, pendingActors,
   legalSetupSettlements, legalSetupRoads, legalRoads, legalSettlements, legalCities,
-  legalRobberTiles, stealTargets, zeroRes, viewFor, sbpActor,
+  legalRobberTiles, stealTargets, zeroRes, viewFor, sbpActor, vpTargetFor,
 } from './game';
 import type { Action, ActionOf, BotLevel, GameState, Hand, Res, Tile, TileKind } from './types';
 
@@ -217,7 +217,7 @@ function tryDevPlay(s: GameState, pid: number): ActionOf<'playDev'> | null {
 function mainAction(s: GameState, pid: number, buildOnly = false): Action | null {
   const p = s.players[pid]!;
   const L = lvl(s, pid);
-  const target = s.config.rules.vpTarget;
+  const target = vpTargetFor(s, pid);
 
   if (s.trade && s.trade.from === pid) {
     const acc = Object.entries(s.trade.responses).filter(([, r]) => r === 'accept').map(([k]) => +k);
@@ -295,7 +295,7 @@ function respond(s: GameState, pid: number): Action {
   const t = s.trade!;
   const me = s.players[pid]!;
   const reject: ActionOf<'respondTrade'> = { type: 'respondTrade', pid, accept: false, tradeId: t.id };
-  if (victoryPoints(s, t.from, false) >= s.config.rules.vpTarget - 2) return reject;
+  if (victoryPoints(s, t.from, false) >= vpTargetFor(s, t.from) - 2) return reject;
   const canPay = canAfford(me.res, t.get);
   const L = lvl(s, pid);
   if (me.level === 'easy') return { ...reject, accept: canPay && noise(s, pid + 50) < 0.35 };

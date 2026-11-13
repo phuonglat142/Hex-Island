@@ -1,4 +1,5 @@
 import { RES } from './constants';
+import { expansionOf } from './config';
 import { rand, randInt, shuffle } from './rng';
 import type { Board, Config, Edge, MapConfig, Port, Res, Rng, SeaTile, ShapeId, Tile, TileKind, Vertex } from './types';
 
@@ -234,6 +235,12 @@ function placeNumbers(rng: Rng, tiles: Tile[], adj: number[][], movable: number[
 }
 
 // ---------- full board ----------
+/** An edge where a ship may sit: touches sea and is not on the outer frame (both sides are tiles). */
+export function isShipEdge(board: Board, e: Edge): boolean {
+  const sea = e.sea?.length ?? 0;
+  return sea >= 1 && e.hexes.length + sea === 2;
+}
+
 export function generateBoard(config: Config, rng: Rng): Board {
   const m = config.map;
   const np = config.players.length;
@@ -289,49 +296,62 @@ export function generateBoard(config: Config, rng: Rng): Board {
   needNum.forEach((ti, k) => (tiles[ti]!.num = tokens[k]!));
   placeNumbers(rng, tiles, adj, needNum, m.numbers !== 'random');
 
-  // sea ring (visual only)
+  // sea ring (visual only in the base game; 2 hexes wide and playable in Seafarers)
+  const seafarers = expansionOf(config) === 'seafarers';
   const seaKeys = new Map<string, Hex>();
   for (const t of tiles)
     for (const nb of neighborsOf([t.q, t.r])) {
       const k = hk(...nb);
       if (!index.has(k) && !seaKeys.has(k)) seaKeys.set(k, nb);
     }
-  const sea: SeaTile[] = [...seaKeys.values()].map(([q, r]) => ({ q, r, ...hexCenter(q, r) }));
+  if (seafarers) {
+    // second ring: no RNG involved, so land generation is identical to the base game
+    for (const h of Array.from(seaKeys.values()))
+      for (const nb of neighborsOf(h)) {
+        const k = hk(...nb);
+        if (!index.has(k) && !seaKeys.has(k)) seaKeys.set(k, nb);
+      }
+  }
+  const sea: SeaTile[] = [...seaKeys.values()].map(([q, r], i) => (seafarers ? { id: i, q, r, ...hexCenter(q, r), verts: [] as number[] } : { q, r, ...hexCenter(q, r) }));
 
-  // vertices & edges
+  // vertices & edges (land first so their ids match the base game; sea hexes follow)
   const vmap = new Map<string, number>();
   const vertices: Vertex[] = [];
   const emap = new Map<string, number>();
   const edges: Edge[] = [];
-  for (const t of tiles) {
+  const addCell = (q: number, r: number, id: number, verts: number[], isSea: boolean) => {
     for (let i = 0; i < 6; i++) {
-      const p = corner(t.q, t.r, i);
+      const p = corner(q, r, i);
       const k = pkey(p);
       let v = vmap.get(k);
       if (v === undefined) {
         v = vertices.length;
         vmap.set(k, v);
-        vertices.push({ id: v, x: p.x, y: p.y, hexes: [], adj: [], edges: [], port: null });
+        vertices.push(seafarers ? { id: v, x: p.x, y: p.y, hexes: [], adj: [], edges: [], port: null, sea: [] } : { id: v, x: p.x, y: p.y, hexes: [], adj: [], edges: [], port: null });
       }
-      vertices[v]!.hexes.push(t.id);
-      t.verts.push(v);
+      if (isSea) vertices[v]!.sea!.push(id);
+      else vertices[v]!.hexes.push(id);
+      verts.push(v);
     }
     for (let i = 0; i < 6; i++) {
-      const a = t.verts[i]!, b = t.verts[(i + 1) % 6]!;
+      const a = verts[i]!, b = verts[(i + 1) % 6]!;
       const k = a < b ? a + '-' + b : b + '-' + a;
       let e = emap.get(k);
       if (e === undefined) {
         e = edges.length;
         emap.set(k, e);
-        edges.push({ id: e, a: Math.min(a, b), b: Math.max(a, b), hexes: [] });
+        edges.push(seafarers ? { id: e, a: Math.min(a, b), b: Math.max(a, b), hexes: [], sea: [] } : { id: e, a: Math.min(a, b), b: Math.max(a, b), hexes: [] });
         vertices[a]!.edges.push(e);
         vertices[b]!.edges.push(e);
         vertices[a]!.adj.push(b);
         vertices[b]!.adj.push(a);
       }
-      edges[e]!.hexes.push(t.id);
+      if (isSea) edges[e]!.sea!.push(id);
+      else edges[e]!.hexes.push(id);
     }
-  }
+  };
+  for (const t of tiles) addCell(t.q, t.r, t.id, t.verts, false);
+  if (seafarers) for (const st of sea) addCell(st.q, st.r, st.id!, st.verts!, true);
 
   // ports on coastal edges
   const ports: Port[] = [];

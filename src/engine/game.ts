@@ -3,6 +3,7 @@
 import { RES, COSTS, DEV_DECKS, EVENTS, DEV_INFO, isRes, resEntries } from './constants';
 import { randInt, shuffle, pick } from './rng';
 import { generateBoard } from './board';
+import { expansionOf } from './config';
 import type {
   Action, ActionOf, ActionType, ApplyResult, BlindPlacement, Config, DevType, Discovered, GameEvent, GameState,
   GameView, Hand, Res, Rng, SetupEntry, Vision,
@@ -47,6 +48,11 @@ function buildDevDeck(config: Config, n: number, rng: Rng): DevType[] {
 
 export function createGame(configIn: Config): GameState {
   const config = structuredClone(configIn); // config is plain JSON
+  if (expansionOf(config) === 'seafarers') {
+    // the hidden-information modes are tied to the base board
+    const m = config.modes;
+    m.flipped = m.fog = m.blindfold = m.hiddenNumbers = false;
+  }
   const R = config.rules, M = config.modes;
   const rng = { s: (config.seed >>> 0) || 12345 };
   const n = config.players.length;
@@ -224,11 +230,12 @@ function ownBlind(s: GameState, pid: number) {
 
 function vertexOpen(s: GameState, v: number): boolean {
   if (s.buildings[v]) return false;
+  if (s.board.vertices[v]!.hexes.length === 0) return false; // open sea (Seafarers): nothing to settle
   return !s.board.vertices[v]!.adj.some(u => s.buildings[u]);
 }
 
 export function canSetupSettlement(s: GameState, pid: number, v: number): boolean {
-  if (!s.board.vertices[v]) return false;
+  if (!s.board.vertices[v] || s.board.vertices[v]!.hexes.length === 0) return false;
   if (s.setup.blindActive) {
     const { verts } = ownBlind(s, pid);
     if (verts.has(v)) return false;
@@ -239,14 +246,14 @@ export function canSetupSettlement(s: GameState, pid: number, v: number): boolea
 
 function canSetupRoad(s: GameState, pid: number, e: number): boolean {
   const E = s.board.edges[e];
-  if (!E || (E.a !== s.setup.lastVid && E.b !== s.setup.lastVid)) return false;
+  if (!E || E.hexes.length === 0 || (E.a !== s.setup.lastVid && E.b !== s.setup.lastVid)) return false;
   if (s.setup.blindActive) return !ownBlind(s, pid).edges.has(e);
   return s.roads[e] === undefined;
 }
 
 export function canBuildRoad(s: GameState, pid: number, e: number): boolean {
   const E = s.board.edges[e];
-  if (!E || s.roads[e] !== undefined) return false;
+  if (!E || E.hexes.length === 0 || s.roads[e] !== undefined) return false;
   for (const v of [E.a, E.b]) {
     const b = s.buildings[v];
     if (b && b.owner === pid) return true;
@@ -429,10 +436,15 @@ function updateLargestArmy(s: GameState, pid: number) {
   } else if (la.owner === pid) la.count = p.knights;
 }
 
+/** VP needed to win for this player (hook: scenarios may set per-player targets later). */
+export function vpTargetFor(s: GameState, _pid: number): number {
+  return s.config.rules.vpTarget;
+}
+
 function checkWin(s: GameState) {
   if (s.phase === 'setup' || s.phase === 'gameOver') return;
   const vp = victoryPoints(s, s.current);
-  if (vp >= s.config.rules.vpTarget) {
+  if (vp >= vpTargetFor(s, s.current)) {
     s.winner = s.current;
     s.phase = 'gameOver';
     s.trade = null;

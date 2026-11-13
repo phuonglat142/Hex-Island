@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren, JSX } from 'preact';
 import { App } from '@app/index';
 import { BoardView } from '@board/BoardView';
-import { defaultConfig, MODES, PRESETS, PLAYER_COLORS, BOT_NAMES } from '@engine/config';
+import { defaultConfig, expansionOf, MODES, PRESETS, PLAYER_COLORS, BOT_NAMES } from '@engine/config';
 import { SHAPES, generateBoard } from '@engine/board';
 import { DEV_DECKS, TILE_INFO } from '@engine/constants';
 import { createGame } from '@engine/game';
@@ -16,6 +16,11 @@ import { FlagImg } from '@ui/components/FlagImg';
 import { PixelIcon, px } from '@ui/components/PixelIcon';
 import { openFlagEditor } from '@ui/flag/FlagEditor';
 import { myKingdom, patternFlag, saveMyKingdom, validFlag } from '@ui/flag/flag';
+
+// modes that only make sense on the base board (the engine forces them off in Seafarers)
+const HIDDEN_MODES = ['flipped', 'fog', 'blindfold', 'hiddenNumbers'];
+// maps usable in Seafarers (dedicated shapes come later)
+const SEA_SHAPES: ShapeId[] = ['islands'];
 
 const CFG_KEY = 'katanittes.lastConfig';
 export const MAPS_KEY = 'katanittes.maps';
@@ -354,6 +359,7 @@ export function Lobby({ arg }: { arg?: LobbyArg }): JSX.Element {
     refresh();
   };
   const customs = (storage(MAPS_KEY) as CustomMap[] | null) || [];
+  const sea = expansionOf(cfg as unknown as Config) === 'seafarers';
   const shapeDef = SHAPES[m.shape] || SHAPES.custom;
   const mapOpt = (label: ComponentChildren, k: string, options: Array<[string | number, string]>) => (
     <div><label>{label}</label><Select value={String(mm[k])} options={options} onChange={v => setMap(k, v)} /></div>
@@ -409,21 +415,40 @@ export function Lobby({ arg }: { arg?: LobbyArg }): JSX.Element {
             </div>
 
             <div class="card">
+              <h3>{px('🌊 Bản chơi', 22)}</h3>
+              <div class="opt-grid">
+                <div>
+                  <label>Bản chơi</label>
+                  <Select value={sea ? 'seafarers' : 'base'} options={[['base', 'Cơ bản'], ['seafarers', 'Biển cả']]} onChange={v => {
+                    if (v === 'seafarers') {
+                      cfg.rules.expansion = 'seafarers';
+                      cfg.modes.flipped = cfg.modes.fog = cfg.modes.blindfold = cfg.modes.hiddenNumbers = false;
+                      if (!SEA_SHAPES.includes(m.shape)) { m.shape = SEA_SHAPES[0]!; m.custom = null; }
+                    } else delete cfg.rules.expansion;
+                    cfg.seed = newSeed();
+                    refresh();
+                  }} />
+                </div>
+              </div>
+              <p style={{ color: 'var(--muted)', fontSize: '12px', display: sea ? '' : 'none' }}>{px('🌊 Biển cả: vành biển rộng hơn để mở rộng ra khơi. Các chế độ ẩn thông tin bị tắt.', 14)}</p>
+            </div>
+
+            <div class="card">
               <h3>{px('🗺️ Bản đồ', 22)}</h3>
               <div class="maps">
-                {(Object.entries(SHAPES) as Array<[ShapeId, (typeof SHAPES)[ShapeId]]>).filter(([k]) => k !== 'custom').map(([k, sh]) => (
+                {(Object.entries(SHAPES) as Array<[ShapeId, (typeof SHAPES)[ShapeId]]>).filter(([k]) => k !== 'custom' && (!sea || SEA_SHAPES.includes(k))).map(([k, sh]) => (
                   <div key={k} class={'map-card' + (m.shape === k ? ' on' : '')} title={sh.desc} onClick={() => { m.shape = k; m.custom = null; cfg.seed = newSeed(); refresh(); }}>
                     <div class="mini"><MiniSvg mini={miniMap(k)} /></div><b>{sh.name}</b>
                   </div>
                 ))}
-                {customs.map((c, i) => (
+                {!sea && customs.map((c, i) => (
                   <div key={'c' + i} class={'map-card' + (m.shape === 'custom' && m.custom && m.custom.name === c.name ? ' on' : '')} title="Bản đồ tự tạo" onClick={() => { m.shape = 'custom'; m.custom = c; refresh(); }}>
                     <div class="mini"><MiniSvg mini={miniMap('custom', c)} /></div><b>{px('✏️ ' + c.name, 20)}</b>
                   </div>
                 ))}
-                <div class="map-card" onClick={() => App.go('editor')}>
+                {!sea && <div class="map-card" onClick={() => App.go('editor')}>
                   <div class="mini" style={{ display: 'grid', placeItems: 'center', fontSize: '38px' }}><PixelIcon emoji="➕" size={44} /></div><b>Tạo bản đồ</b>
-                </div>
+                </div>}
               </div>
               <p style={{ color: 'var(--muted)', fontSize: '13px', margin: '10px 0 0' }}>{shapeDef.desc}</p>
               <div class="opt-grid">
@@ -440,7 +465,7 @@ export function Lobby({ arg }: { arg?: LobbyArg }): JSX.Element {
             <div class="card">
               <h3>{px('🎭 Chế độ chơi ', 22)}<small>kết hợp tùy thích</small></h3>
               <div class="modes">
-                {MODES.map(md => {
+                {MODES.filter(md => !(sea && HIDDEN_MODES.includes(md.id))).map(md => {
                   const on = md.get(cfg as unknown as Config);
                   return (
                     <div key={md.id} class={'mode' + (on ? ' on' : '') + (md.flagship ? ' flag' : '')} role="switch" aria-checked={!!on}
