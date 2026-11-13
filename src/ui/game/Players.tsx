@@ -29,6 +29,8 @@ function cardData(pid: number) {
     roadAward: st.longestRoad.owner === pid, armyAward: st.largestArmy.owner === pid,
     discard: st.pendingDiscards[pid] || 0,
     gold: st.goldPending?.[pid] || 0,
+    ships: st.ships ? p.shipsLeft ?? 0 : -1,
+    isl: st.ships ? G.islandBonusVP(st, pid) : 0,
     gain: gains.value.filter(g => g.pid === pid).map(g => g.text).join(' '),
   };
 }
@@ -44,14 +46,16 @@ function PlayerCard({ pid }: { pid: number }): JSX.Element {
         <div class="avatar">{d.flag ? <FlagImg flag={d.flag} size={30} /> : px(initial, 18)}</div>
         <div class="name">{d.name}{d.tag && <small>{d.tag}</small>}{d.off && <span class="conn off" title="Mất kết nối"> {px('🔌', 16)}</span>}</div>
         {d.acting && <span class="acting-dot" title="Đang đi" />}
-        <div class="vp" title="Điểm chiến thắng">{d.pub}{d.extra > 0 && <small> +{d.extra}</small>}</div>
+        <div class="vp" title={d.isl > 0 ? `Điểm chiến thắng (gồm ${d.isl} điểm Thưởng đảo mới)` : 'Điểm chiến thắng'}>{d.pub}{d.extra > 0 && <small> +{d.extra}</small>}</div>
       </div>
       <div class="stats">
         <span title="Thẻ tài nguyên">{px(`🂠 ${d.hand}`, 15)}</span>
         <span title="Thẻ phát triển">{px(`🃏 ${d.dev}`, 15)}</span>
         <span title="Hiệp sĩ đã dùng">{px(`⚔️ ${d.knights}`, 15)}</span>
-        <span title="Đường dài nhất của bạn">{px(`🛣️ ${d.road}`, 15)}</span>
-        {d.roadAward && <span class="award" title="Con đường dài nhất (+2)">{px('🏅Đường', 15)}</span>}
+        <span title={d.ships >= 0 ? 'Tuyến đường dài nhất (đường + tàu)' : 'Đường dài nhất của bạn'}>{px(`🛣️ ${d.road}`, 15)}</span>
+        {d.ships >= 0 && <span title="Số tàu còn lại">{px(`⛵ ${d.ships}`, 15)}</span>}
+        {d.isl > 0 && <span class="award" title="Thưởng đảo mới (+2 mỗi đảo)">{px(`🏝️ +${d.isl}`, 15)}</span>}
+        {d.roadAward && <span class="award" title={d.ships >= 0 ? 'Tuyến đường dài nhất (+2)' : 'Con đường dài nhất (+2)'}>{px(d.ships >= 0 ? '🏅Tuyến' : '🏅Đường', 15)}</span>}
         {d.armyAward && <span class="award" title="Đội quân lớn nhất (+2)">{px('🏅Quân đội', 15)}</span>}
         {d.gold > 0 && <span style={{ color: 'var(--gold, #d4a017)' }}>{px(`🪙 ${d.gold}`, 15)}</span>}
         {d.discard > 0 && <span style={{ color: 'var(--red)' }}>{px(`🗑️ ${d.discard}`, 15)}</span>}
@@ -76,7 +80,7 @@ export function Bank(): JSX.Element {
   countRender('Bank');
   const sel = useMemo(() => select(() => {
     const st = cur()!;
-    return { bank: RES.map(r => st.bank[r]), deck: st.devDeck.length, vp: st.config.rules.vpTarget };
+    return { bank: RES.map(r => st.bank[r]), deck: st.devDeck.length, vp: G.vpTargetFor(st, st.current) };
   }, jsonEq), []);
   const b = sel.value;
   return (

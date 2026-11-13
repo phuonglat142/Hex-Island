@@ -226,3 +226,11 @@ Luật phụ thuộc: `feature → domain (+ designsystem, ui)`; `data, network 
 ## 8. Thứ tự ưu tiên và rủi ro
 - Mốc 1 (bước 0–5): chơi được ván cổ điển với bot. Mốc 2 (bước 6–8): ngang tính năng offline với web. Mốc 3 (bước 9): LAN. Mốc 4 (bước 10): phát hành.
 - Rủi ro chính: (1) sai lệch luật khi port → đã chặn bằng sim + golden; (2) quyền mạng cục bộ mới của Android 17 → làm thử nghiệm nhỏ NSD + WebSocket ngay đầu bước 9; (3) router chặn mDNS → luôn có đường nhập tay địa chỉ; (4) phiên bản thư viện thay đổi nhanh → chỉ ghim sau khi kiểm tra ở bước 0, dùng version catalog một chỗ.
+
+## 9. Biển cả (Seafarers)
+Bản mở rộng chọn bằng `Config.rules.expansion = 'seafarers'` (thiếu = bản Cơ bản; ván cũ không đổi). Khi port cần thêm:
+- **Trường trạng thái mới** (đều chỉ có khi seafarers): `GameState.ships` (cạnh -> `{owner, built}`), `shipMoved`, `goldPending` (pid -> số thẻ phải chọn), `islandBonus` (pid -> các đảo xuất phát); `Board.pirate`, `Board.pirateFrom`, `Board.homeIslands`; `Tile.island`; `Vertex.sea`, `Edge.sea`, `SeaTile.id/verts`; `Player.shipsLeft`; `Rules.maxShips`, `Rules.islandBonus`, `Rules.expansion`.
+- **Hành động mới**: `build` với `what: 'ship'`, `placeShip` (đầu ván), `moveShip {from, to}`, `chooseGold {res}`, `moveRobber` thêm `target: 'pirate'` (và `victim`). Fx mới: `pirate`, `shipMoved`.
+- **Pha mới** `'gold'`: nhiều người cùng chọn tài nguyên mỏ vàng (`pendingActors`), tương tự pha `discard`.
+- Luật cần đúng như web: tuyến dài nhất tính cả đường lẫn tàu (đổi loại chỉ tại nhà/thành phố của mình, nhà đối thủ cắt tuyến); dời tàu 1 lần/lượt chỉ với tàu mở (vòng tàu đóng kín không chạm nhà mình cũng là mở); hải tặc chặn xây/dời tàu quanh ô; thưởng 2 điểm mỗi đảo mới (`islandBonusVP`); mục tiêu điểm đi qua `vpTargetFor`.
+- **Fixtures**: `scripts/export-fixtures.ts` chưa xuất ván Biển cả; khi thêm cần tăng `FORMAT` (hiện = 1) và xuất lại, không sửa fixtures cũ. `scripts/sim.ts --sea` (`runSeaSim`) cho bất biến tàu; port sang Kotlin nên có sim tương đương.

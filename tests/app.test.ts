@@ -17,7 +17,7 @@ import { applyAction, createGame, pendingActors } from '@engine/game';
 import { botAct } from '@engine/bot';
 import type { Config, GameState } from '@engine/types';
 import { App, SAVE_KEY, createSaver, store } from '@app/index';
-import { makeConfig } from '../scripts/sim.ts';
+import { makeConfig, makeSeaConfig } from '../scripts/sim.ts';
 
 const handlers: Record<string, (() => void)[]> = {};
 let hidden = false;
@@ -152,6 +152,24 @@ describe('local game with bots through App', () => {
     expect(JSON.stringify(App.state)).toBe(snapshot);
     expect(App.config).toEqual(mid.config);
   });
+
+  test('a seafarers game saved mid-way resumes intact (ships, pirate, gold, island bonus) and plays on to the end', () => {
+    const cfg = makeSeaConfig(0);
+    cfg.players.forEach(p => (p.kind = 'bot'));
+    App.startGame(cfg);
+    for (let i = 0; i < 4000 && App.state!.phase !== 'gameOver' && Object.keys(App.state!.ships ?? {}).length < 3; i++) vi.advanceTimersByTime(700);
+    const mid = App.state!;
+    expect(mid.phase).not.toBe('gameOver');
+    expect(Object.keys(mid.ships!).length).toBeGreaterThan(0);
+    const snapshot = JSON.stringify(mid);
+    App.leaveGame();
+    expect(App.resume()).toBe(true);
+    expect(JSON.stringify(App.state)).toBe(snapshot);
+    expect(App.state!.ships).toEqual(mid.ships);
+    expect(App.state!.board.pirate).toBe(mid.board.pirate);
+    for (let n = 0; App.state && App.state.phase !== 'gameOver' && n < 20000; n++) vi.advanceTimersByTime(700);
+    expect(App.state!.phase).toBe('gameOver');
+  }, 120000);
 
   test('store: `view` is computed once per state change and follows the viewer', () => {
     App.startGame(botConfig());

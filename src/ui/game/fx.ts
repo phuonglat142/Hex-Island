@@ -113,6 +113,9 @@ function handleFx(st: GameState): void {
       case 'pirate':
         play.robber();
         break;
+      case 'shipMoved':
+        play.build();
+        break;
       case 'event': {
         const def = EVENTS.find(e => e.id === f.event.id);
         announce(f.event.icon, f.event.name, def ? def.desc : '');
