@@ -26,6 +26,8 @@ export interface Tile {
   verts: number[];
   revealed: boolean;
   numRevealed: boolean;
+  /** Seafarers only: index of the connected land component (island) this tile belongs to */
+  island?: number;
 }
 
 /** A decorative sea hex around the land (visual only). */
@@ -90,6 +92,8 @@ export interface Board {
   robber: number;
   /** where the robber was before its last move (set after the first move) */
   robberFrom?: number;
+  /** Seafarers only: islands where setup is allowed (maps with one home island); unset = anywhere */
+  homeIslands?: number[];
 }
 
 // ---------- config ----------
@@ -97,7 +101,7 @@ export type BotLevel = 'easy' | 'normal' | 'hard';
 export type SeatKind = 'human' | 'bot';
 export type ShapeId =
   | 'classic' | 'mini' | 'extended' | 'big' | 'huge' | 'ring' | 'star' | 'kingdoms'
-  | 'islands' | 'pangea' | 'custom';
+  | 'islands' | 'pangea' | 'custom' | 'seaIslands' | 'mainland';
 
 export interface PlayerConfig {
   name: string;
@@ -136,6 +140,8 @@ export type Expansion = 'base' | 'seafarers';
 export interface Rules {
   /** missing = 'base' */
   expansion?: Expansion;
+  /** Seafarers: +2 VP for a player's first settlement on each foreign island (official FAQ 3) */
+  islandBonus?: boolean;
   vpTarget: number;
   handLimit: number;
   setupRounds: number;
@@ -307,6 +313,8 @@ export interface GameState {
   roads: Record<string, number>;
   /** Seafarers only: ships by edge id (`built` = turn it was built) */
   ships?: Record<string, { owner: number; built: number }>;
+  /** Seafarers + islandBonus: per player, islands of their setup settlements (no bonus there) */
+  islandBonus?: Record<string, number[]>;
   blind: BlindPlacement[];
   bank: Hand;
   bankTotal: number;

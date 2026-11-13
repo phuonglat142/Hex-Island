@@ -7,7 +7,7 @@ import { generateBoard, isShipEdge, SHAPES } from '@engine/board';
 import { botAct } from '@engine/bot';
 import type { Config, GameState, ShapeId } from '@engine/types';
 
-const shapes = Object.keys(SHAPES).filter(k => k !== 'custom') as ShapeId[];
+const shapes = Object.keys(SHAPES).filter(k => k !== 'custom' && !SHAPES[k as ShapeId].sea) as ShapeId[];
 
 function cfg(shape: ShapeId, seed: number, sea: boolean, np = 4): Config {
   const c = defaultConfig();
@@ -43,7 +43,8 @@ test('seafarers board: land ids, tiles and ports identical to base (sea consumes
     for (const seed of [1, 7, 42]) {
       const a = board(cfg(shape, seed, false));
       const b = board(cfg(shape, seed, true));
-      expect(hash(b.tiles)).toBe(hash(a.tiles));
+      // Tile.island is the only field Seafarers adds to a land tile
+      expect(hash(b.tiles.map(({ island, ...t }) => t))).toBe(hash(a.tiles));
       expect(hash(b.ports)).toBe(hash(a.ports));
       expect(b.robber).toBe(a.robber);
       expect(b.vertices.length).toBeGreaterThan(a.vertices.length);

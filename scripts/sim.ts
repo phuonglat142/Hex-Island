@@ -7,7 +7,7 @@ import { SHAPES } from '@engine/board';
 import { RES } from '@engine/constants';
 import type { Action, BotLevel, Config, DevDeckId, GameState, PlayerConfig, ShapeId } from '@engine/types';
 
-const shapes = Object.keys(SHAPES).filter(k => k !== 'custom') as ShapeId[];
+const shapes = Object.keys(SHAPES).filter(k => k !== 'custom' && !SHAPES[k as ShapeId].sea) as ShapeId[];
 
 export function makeConfig(i: number): Config {
   const c = defaultConfig();

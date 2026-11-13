@@ -82,9 +82,9 @@ export function pixelToHex(x: number, y: number): Hex {
 }
 
 // Several islands separated by at least one sea hex.
-function islands(rng: Rng, n: number, k: number): Hex[] {
+function islands(rng: Rng, n: number, k: number, radA = 1.9, radB = 1.4): Hex[] {
   const size = Math.ceil(n / k);
-  const rad = 1.9 * Math.sqrt(size) + 1.4;
+  const rad = radA * Math.sqrt(size) + radB;
   const off = rand(rng) * Math.PI * 2;
   const owner = new Map<string, number>();
   const isl: Hex[][] = [];
@@ -121,10 +121,82 @@ function islands(rng: Rng, n: number, k: number): Hex[] {
   return isl.flat();
 }
 
+/** Land hexes wanted by the Seafarers-only shapes: never fewer than what the players need. */
+export function seaMapSize(shape: ShapeId, np: number): number {
+  return shape === 'mainland' ? 14 + 4 * np : 7 * seaIslandCount(np);
+}
+const seaIslandCount = (np: number): number => (np <= 4 ? 4 : np <= 6 ? 5 : 6);
+
+/** Several medium islands only 1-2 sea hexes apart, so a ship or two can cross. */
+function seaIslands(rng: Rng, n: number, np: number): Hex[] {
+  const k = seaIslandCount(np);
+  return islands(rng, Math.max(n, seaMapSize('seaIslands', np)), k, 1.45, 1.3);
+}
+
+/** One big home island (first hexes of the result) plus small islands 1-2 sea hexes away. */
+function mainland(rng: Rng, n: number, np: number): Hex[] {
+  const total = Math.max(n, seaMapSize('mainland', np));
+  const homeN = Math.round(total * 0.62);
+  const home = blob(rng, homeN);
+  const smallK = np <= 3 ? 3 : np <= 5 ? 4 : np <= 6 ? 5 : 6;
+  const owner = new Map<string, number>(home.map((h, i) => [hk(...h), 0] as [string, number]));
+  const isl: Hex[][] = [home];
+  const distTo = (h: Hex, set: Hex[]) => Math.min(...set.map(o => hexDist(h, o)));
+  const off = rand(rng) * Math.PI * 2;
+  let left = total - homeN;
+  for (let i = 0; i < smallK; i++) {
+    const want = Math.max(2, Math.min(5, Math.round(left / (smallK - i) + (rand(rng) - 0.5) * 2.4)));
+    const cands: Hex[] = [];
+    const R = 12;
+    for (const h of hexagon(R)) {
+      if (owner.has(hk(...h))) continue;
+      if (neighborsOf(h).some(x => owner.has(hk(...x)))) continue;
+      const d = distTo(h, home);
+      if (d < 2 || d > 3) continue;
+      if (isl.slice(1).some(o => distTo(h, o) < 3)) continue;
+      cands.push(h);
+    }
+    if (!cands.length) break;
+    const a = off + (i / smallK) * Math.PI * 2;
+    const c = hexCenter(0, 0);
+    const score = (h: Hex) => {
+      const p = hexCenter(h[0], h[1]);
+      return Math.abs(Math.atan2(p.y - c.y, p.x - c.x) - a + Math.PI * 4) % (Math.PI * 2);
+    };
+    const ang = (h: Hex) => { const v = score(h); return Math.min(v, Math.PI * 2 - v); };
+    const best = cands.map(h => [h, ang(h)] as [Hex, number]).sort((x, y) => x[1] - y[1]).slice(0, 4);
+    const seed = best[randInt(rng, best.length)]![0];
+    const me = [seed];
+    owner.set(hk(...seed), i + 1);
+    while (me.length < want) {
+      const gc: [Hex, number][] = [];
+      for (const h of me)
+        for (const nb of neighborsOf(h)) {
+          const kk = hk(...nb);
+          if (owner.has(kk)) continue;
+          if (neighborsOf(nb).some(x => owner.has(hk(...x)) && owner.get(hk(...x)) !== i + 1)) continue;
+          gc.push([nb, neighborsOf(nb).filter(x => owner.get(hk(...x)) === i + 1).length]);
+        }
+      if (!gc.length) break;
+      const [nb] = weightedPick(rng, gc, g => g[1] ** 2);
+      if (owner.has(hk(...nb))) continue;
+      owner.set(hk(...nb), i + 1);
+      me.push(nb);
+    }
+    isl.push(me);
+    left -= me.length;
+  }
+  return isl.flat();
+}
+
 interface ShapeDef {
   name: string;
   desc: string;
   random?: boolean;
+  /** Seafarers-only shape */
+  sea?: boolean;
+  /** the island of the first hex is the only one where setup is allowed */
+  homeFirst?: boolean;
   gen: (rng: Rng, m: MapConfig, np: number) => Hex[];
 }
 
@@ -156,6 +228,14 @@ export const SHAPES: Record<ShapeId, ShapeDef> = {
   pangea: {
     name: 'Lục địa ngẫu nhiên', desc: 'Một lục địa có hình dạng ngẫu nhiên. Tùy chỉnh được kích thước.', random: true,
     gen: (rng, m) => blob(rng, m.size || 24),
+  },
+  seaIslands: {
+    name: 'Quần đảo biển', desc: 'Vài hòn đảo vừa, cách nhau một hai ô biển. Bắt đầu ở đảo nào cũng được, rồi đóng tàu sang đảo khác.', random: true, sea: true,
+    gen: (rng, m, np) => seaIslands(rng, m.size || 0, np),
+  },
+  mainland: {
+    name: 'Đảo chính & đảo nhỏ', desc: 'Một đảo lớn để xuất phát, quanh đó là các đảo nhỏ cần tàu. Ô vàng nằm ở đảo nhỏ.', random: true, sea: true, homeFirst: true,
+    gen: (rng, m, np) => mainland(rng, m.size || 0, np),
   },
   custom: { name: 'Tự tạo', desc: 'Bản đồ làm bằng trình chỉnh sửa.', gen: () => hexagon(2) },
 };
@@ -259,6 +339,20 @@ export function generateBoard(config: Config, rng: Rng): Board {
   const index = new Map(tiles.map(t => [hk(t.q, t.r), t.id]));
   const adj = tiles.map(t => neighborsOf([t.q, t.r]).map(h => index.get(hk(...h))).filter((x): x is number => x !== undefined));
 
+  // Seafarers: islands = connected components of land hexes (tile 0's island is index 0)
+  const seafarers = expansionOf(config) === 'seafarers';
+  if (seafarers) {
+    let comp = 0;
+    for (const t of tiles) {
+      if (t.island !== undefined) continue;
+      t.island = comp;
+      const stack = [t.id];
+      while (stack.length) for (const j of adj[stack.pop()!]!) if (tiles[j]!.island === undefined) { tiles[j]!.island = comp; stack.push(j); }
+      comp++;
+    }
+  }
+  const homeOnly = seafarers && !fixed && !!SHAPES[m.shape]?.homeFirst;
+
   // resources
   const free: number[] = [];
   tiles.forEach((t, i) => {
@@ -283,6 +377,19 @@ export function generateBoard(config: Config, rng: Rng): Board {
   pool.push(...(m.resources === 'chaos' ? chaosResources(rng, rest) : balancedResources(rng, rest)));
   shuffle(rng, pool);
   free.forEach((ti, k) => (tiles[ti]!.res = pool[k]!));
+  if (homeOnly) {
+    // swaps only: the resource counts stay balanced. Desert on the home island, gold away from it.
+    const isHome = (t: Tile) => t.island === 0;
+    const swap = (a: Tile, b: Tile) => { const x = a.res; a.res = b.res; b.res = x; };
+    for (const kind of ['desert', 'gold'] as const) {
+      const wantHome = kind === 'desert';
+      for (const t of tiles) {
+        if (t.res !== kind || isHome(t) === wantHome) continue;
+        const to = tiles.find(o => isHome(o) === wantHome && o.res !== 'desert' && o.res !== 'gold');
+        if (to) swap(t, to);
+      }
+    }
+  }
 
   // numbers
   const needNum: number[] = [];
@@ -297,7 +404,6 @@ export function generateBoard(config: Config, rng: Rng): Board {
   placeNumbers(rng, tiles, adj, needNum, m.numbers !== 'random');
 
   // sea ring (visual only in the base game; 2 hexes wide and playable in Seafarers)
-  const seafarers = expansionOf(config) === 'seafarers';
   const seaKeys = new Map<string, Hex>();
   for (const t of tiles)
     for (const nb of neighborsOf([t.q, t.r])) {
@@ -406,5 +512,7 @@ export function generateBoard(config: Config, rng: Rng): Board {
     maxY: Math.max(...all.map(t => t.y)) + 1.2,
   };
   const desert = tiles.find(t => t.res === 'desert');
-  return { tiles, sea, vertices, edges, ports, bounds, robber: desert ? desert.id : -1 };
+  const board: Board = { tiles, sea, vertices, edges, ports, bounds, robber: desert ? desert.id : -1 };
+  if (homeOnly) board.homeIslands = [0];
+  return board;
 }
